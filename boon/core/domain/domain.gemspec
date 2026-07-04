@@ -22,4 +22,6 @@ Gem::Specification.new do |spec|
   end
 
   spec.add_dependency "rails", ">= 8.1.3"
+  spec.add_dependency "bcrypt", "~> 3.1.7"
+  spec.add_dependency "cpf_cnpj"
 end
