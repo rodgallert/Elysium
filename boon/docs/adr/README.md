@@ -13,6 +13,7 @@ consequences. They are a first-class part of this project — they show *why*, n
 | ADR-0006 | Front end is Vue 3 + Vuetify SPA, not Nuxt/SSR |
 | ADR-0007 | Nginx edge gateway with path-based routing (this folder has the full record) |
 | ADR-0008 | Queue contract by payload, not shared job classes — preserves Go portability |
+| ADR-0009 | Order stores only total amount paid; Payment breaks down total/commission/producer payout per gateway attempt; multi-gateway retry-on-failure; expanded status vocabulary |
 
 > Only ADR-0007 is written out as a full example. The rest are summarized in `PROJECT.md`; write each
 > full record here as the decision gets implemented. Suggested filename pattern: `0001-title.md`.
