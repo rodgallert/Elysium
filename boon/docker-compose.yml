@@ -1,0 +1,166 @@
+# boon/docker-compose.yml
+#
+# `docker compose up` should bring up the whole stack from a clean clone: Postgres/Redis, the
+# three Rails services (dev-mode Dockerfiles, single shared `boon_development` database), and
+# both Vite dev servers, all wired behind nginx on port 80. Fedora/SELinux: bind mounts use ":z".
+#
+# Edge: nginx (port 80) routes:
+#   /                     → core-frontend
+#   /checkout             → checkout-frontend   (Vite base must be /checkout/)
+#   /api                  → swagger (served by core, or a docs service)
+#   /api/checkout/*, POST /api/checkout → checkout API   (matched BEFORE /api)
+#   /api/*                → core API
+# Workers are NOT behind nginx (background only).
+
+services:
+  nginx:
+    image: nginx:1.27
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:z
+    depends_on:
+      - core
+      - checkout
+      - core-frontend
+      - checkout-frontend
+
+  # ---------------- infra ----------------
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: boon
+      POSTGRES_PASSWORD: boon
+      POSTGRES_DB: boon_development
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U boon"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---------------- Rails services ----------------
+  core:
+    build:
+      context: .
+      dockerfile: core/Dockerfile
+    # Must end in exactly "./bin/rails server" (no extra flags) — bin/docker-entrypoint checks
+    # the last two args to decide whether to run `db:prepare` before starting. Puma reads PORT
+    # (config/puma.rb) and binds 0.0.0.0 by default, so no -b/-p flags are needed anyway.
+    command: ./bin/rails server
+    # Whole monorepo bind-mounted (not just ./core) so the "domain" gem's `path: "domain"` keeps
+    # resolving at runtime the same way it did at build time — see core/Dockerfile for why.
+    volumes:
+      - .:/workspace:z
+    environment:
+      DATABASE_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+
+  checkout:
+    build:
+      context: .
+      dockerfile: checkout/Dockerfile
+    command: ./bin/rails server
+    # Whole monorepo bind-mounted — checkout/Gemfile's "domain" gem is `path: "../core/domain"`,
+    # a sibling directory, so the mount must cover both to keep that relative path resolving.
+    volumes:
+      - .:/workspace:z
+    environment:
+      DATABASE_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+
+  # ---------------- workers (same ./worker image, different queues) ----------------
+  worker-sales:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    command: bundle exec sidekiq -q sales -c 10
+    volumes:
+      - .:/workspace:z
+    environment:
+      DATABASE_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    deploy:
+      replicas: 2          # scale under load: docker compose up --scale worker-sales=N
+
+  worker-notifications:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    command: bundle exec sidekiq -q notifications -c 5
+    volumes:
+      - .:/workspace:z
+    environment:
+      DATABASE_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
+    deploy:
+      replicas: 1
+
+  # ---------------- frontends (Vue 3 + Vuetify) ----------------
+  # For a production-like build, these would be built and served as static assets (possibly by nginx
+  # itself). Shown here as dev servers; the Claude Code wiring step decides build vs. dev serving.
+  core-frontend:
+    build: ./core-frontend
+    volumes:
+      - ./core-frontend:/app:z
+      - core_frontend_node_modules:/app/node_modules
+    environment:
+      # API base as seen from the browser through nginx:
+      VITE_API_BASE: /api
+    depends_on:
+      - core
+
+  checkout-frontend:
+    build: ./checkout-frontend
+    volumes:
+      - ./checkout-frontend:/app:z
+      - checkout_frontend_node_modules:/app/node_modules
+    environment:
+      VITE_API_BASE: /api/checkout
+      # Served under /checkout → Vite base set to /checkout/ in vite.config.mts
+    depends_on:
+      - checkout
+
+volumes:
+  pgdata:
+  redisdata:
+  core_frontend_node_modules:
+  checkout_frontend_node_modules:
+
+# -----------------------------------------------------------------------------
+# Still open (not blocking a clean `docker compose up`, but worth knowing):
+# - No migrations exist yet anywhere (core/domain has none). `db:prepare` runs on every boot of
+#   core/checkout (via bin/docker-entrypoint) and safely no-ops against the empty shared DB. Once
+#   migrations exist in core/domain, how they get applied to core/checkout/worker (which all load
+#   the same engine) still needs deciding — that's domain/engine territory, not compose wiring.
+# - Frontends still need to actually read VITE_API_BASE in app code (axios/fetch base URL) —
+#   Dockerfiles/compose only wire the env var in, the frontend code has to consume it.
+# Bottleneck note: heavy scale shifts load to Postgres connections (PgBouncer) + gateway rate limits.
+# -----------------------------------------------------------------------------
