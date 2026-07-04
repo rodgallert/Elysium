@@ -4,3 +4,7 @@ tmp/
 log/
 .env
 *.log
+
+boon/CLAUDE.md
+boon/PROJECT.md
+boon/MIGRATION_TYPES.md
