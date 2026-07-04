@@ -1,0 +1,6 @@
+.ruby-lsp/
+node_modules/
+tmp/
+log/
+.env
+*.log
