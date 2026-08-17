@@ -1,4 +1,5 @@
 using Prince.Domain.Models.Payments;
+using Prince.Domain.Models.Shared;
 
 namespace Prince.Domain.Models.Products;
 
@@ -8,9 +9,8 @@ namespace Prince.Domain.Models.Products;
 /// the Offer that was purchased (by Id), not the Product directly, and snapshots this
 /// offer's price at the moment of purchase since it can change later via UpdateDetails.
 /// </summary>
-public sealed class Offer
+public sealed class Offer : BaseEntity
 {
-    public Guid Id { get; }
     public Guid ProductId { get; }
     public string Name { get; private set; } = null!;
     public Money RealPrice { get; private set; }
@@ -22,7 +22,6 @@ public sealed class Offer
 
     public Offer(Guid productId, string name, Money realPrice, Money discountPrice, string description)
     {
-        Id = Guid.NewGuid();
         ProductId = productId;
         Name = ValidateName(name);
         Description = ValidateDescription(description);

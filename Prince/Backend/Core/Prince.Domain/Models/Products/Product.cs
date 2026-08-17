@@ -1,3 +1,5 @@
+using Prince.Domain.Models.Shared;
+
 namespace Prince.Domain.Models.Products;
 
 public enum ProductStatus
@@ -13,12 +15,11 @@ public enum ProductStatus
 /// fast-to-start-selling philosophy) and stays that way until blocked or deleted. Deleted
 /// is terminal — a deleted product can never be reactivated or blocked again.
 /// </summary>
-public sealed class Product
+public sealed class Product : BaseEntity
 {
     private const int MaxNameLength = 200;
     private const int MaxShortDescriptionLength = 500;
 
-    public Guid Id { get; }
     public Guid ProducerId { get; }
     public string Name { get; private set; } = null!;
     public string ShortDescription { get; private set; } = null!;
@@ -31,7 +32,6 @@ public sealed class Product
 
     public Product(Guid producerId, string name, string shortDescription, string imageUrl, ProductType type)
     {
-        Id = Guid.NewGuid();
         ProducerId = producerId;
         Name = ValidateName(name);
         ShortDescription = ValidateShortDescription(shortDescription);

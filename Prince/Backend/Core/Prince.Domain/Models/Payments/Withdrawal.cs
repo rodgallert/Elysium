@@ -1,3 +1,5 @@
+using Prince.Domain.Models.Shared;
+
 namespace Prince.Domain.Models.Payments;
 
 /// <summary>
@@ -7,9 +9,8 @@ namespace Prince.Domain.Models.Payments;
 /// Only constructible via <see cref="Producers.Producer.RequestWithdrawal"/> — verification and
 /// available-balance checks must never be bypassable by constructing this directly.
 /// </summary>
-public sealed class Withdrawal
+public sealed class Withdrawal : BaseEntity
 {
-    public Guid Id { get; }
     public Guid ProducerId { get; }
     public Money RequestedAmount { get; }
     public PaymentGateway Gateway { get; }
@@ -28,7 +29,6 @@ public sealed class Withdrawal
                 $"Withdrawal amount ({requestedAmount}) must exceed the gateway's withdrawal fee ({fee}).");
         }
 
-        Id = Guid.NewGuid();
         ProducerId = producerId;
         RequestedAmount = requestedAmount;
         Gateway = gateway;

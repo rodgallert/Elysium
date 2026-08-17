@@ -1,3 +1,5 @@
+using Prince.Domain.Models.Shared;
+
 namespace Prince.Domain.Models.Payments;
 
 /// <summary>
@@ -9,9 +11,8 @@ namespace Prince.Domain.Models.Payments;
 /// Only constructible via <see cref="Producers.Producer.RecordTransaction"/> — the producer's
 /// balance must never drift out of sync with the transactions that funded it.
 /// </summary>
-public sealed class Transaction
+public sealed class Transaction : BaseEntity
 {
-    public Guid Id { get; }
     public Guid ProducerId { get; }
     public Guid OfferId { get; }
     public Buyer Buyer { get; } = null!;
@@ -25,7 +26,6 @@ public sealed class Transaction
 
     internal Transaction(Guid producerId, Guid offerId, Buyer buyer, Money amountPaid, PaymentMethod paymentMethod)
     {
-        Id = Guid.NewGuid();
         ProducerId = producerId;
         OfferId = offerId;
         Buyer = buyer;

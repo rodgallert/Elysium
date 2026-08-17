@@ -17,9 +17,8 @@ public enum ProducerVerificationStatus
 /// balance: Transaction/Withdrawal only exist through the methods below, so the balance can
 /// never drift out of sync with what actually funded or drew from it.
 /// </summary>
-public sealed class Producer
+public sealed class Producer : BaseEntity
 {
-    public Guid Id { get; }
     public string Name { get; } = null!;
     public string Email { get; } = null!;
     public PasswordHash PasswordHash { get; private set; }
@@ -28,7 +27,8 @@ public sealed class Producer
     public ProducerVerificationStatus VerificationStatus { get; private set; }
     public Cpf? Cpf { get; private set; }
 
-    // For EF Core materialization only — bypasses Id/PasswordHash generation so reads don't mutate identity.
+    // For EF Core materialization only — bypasses this constructor's validation so reads of
+    // already-trusted stored data don't re-run it (and can't break if validation gets stricter later).
     private Producer() { }
 
     public Producer(string name, string email, string password)
@@ -43,7 +43,6 @@ public sealed class Producer
             throw new ArgumentException("Producer email is required.", nameof(email));
         }
 
-        Id = Guid.NewGuid();
         Name = name;
         Email = email;
         PasswordHash = PasswordHash.Create(password);
