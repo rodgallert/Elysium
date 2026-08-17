@@ -1,0 +1,6 @@
+@Prince.Jobs.Api_HostAddress = http://localhost:5179
+
+GET {{Prince.Jobs.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
