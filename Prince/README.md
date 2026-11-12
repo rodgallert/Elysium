@@ -12,8 +12,10 @@ A monorepo of independently deployable services, orchestrated with Docker Compos
 
 | Service | Stack | Path | Role |
 |---|---|---|---|
-| Core web | Vue 3 + Vite + Vuetify | `/` | Producer/product/offer browsing, sign up, sign in |
-| Checkout web | Vue 3 + Vite + Vuetify | `/checkout` | Purchase flow, deployed separately |
+| Core web (Vue) | Vue 3 + Vite + Vuetify | `/vue` | Producer/product/offer browsing, sign up, sign in |
+| Checkout web (Vue) | Vue 3 + Vite + Vuetify | `/vue/checkout` | Purchase flow, deployed separately |
+| Core web (React) | React + Vite | `/react` | The same core pages, built in React |
+| Checkout web (React) | React + Vite | `/react/checkout` | The same purchase flow, built in React |
 | Core API | .NET 10, ASP.NET Core, EF Core | `/api` | Source of truth for domain data; full clean-architecture layering |
 | Checkout API | .NET 10, ASP.NET Core | `/api/checkout` | Checkout/purchase orchestration, scalable independently of Core |
 | Jobs | .NET 10, ASP.NET Core, Hangfire | `/jobs` | Background processing, admin-only dashboard with its own auth |
@@ -31,7 +33,7 @@ Each service also carries its own `CLAUDE.md` with conventions specific to that 
 ## Tech stack
 
 - **Backend**: .NET 10, ASP.NET Core, Entity Framework Core (code-first, PostgreSQL), Hangfire, xUnit
-- **Frontend**: Vue 3, Vite, Vuetify, TypeScript
+- **Frontend**: Vue 3 with Vuetify, and React — the same pages built in both, side by side; Vite, TypeScript
 - **Infrastructure**: Docker Compose, nginx, PostgreSQL, MinIO
 
 ## Getting started
@@ -47,8 +49,9 @@ That's it — Postgres and MinIO come up, database migrations run automatically,
 
 | What | URL |
 |---|---|
-| Core site | http://localhost:8080/ |
-| Checkout | http://localhost:8080/checkout/ |
+| Core site (Vue / React) | http://localhost:8080/vue/ · http://localhost:8080/react/ |
+| Checkout (Vue / React) | http://localhost:8080/vue/checkout/ · http://localhost:8080/react/checkout/ |
+| Database (Postgres) | `localhost:5432` (credentials in `.env`) |
 | Core API | http://localhost:8080/api/ |
 | Checkout API | http://localhost:8080/api/checkout/ |
 | Jobs dashboard | http://localhost:8080/jobs/ (login required — see `.env`) |

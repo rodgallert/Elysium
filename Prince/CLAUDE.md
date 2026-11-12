@@ -14,13 +14,20 @@ Prince/
 │   ├── Checkout/             # Prince.Checkout.sln — lean, single project
 │   └── Jobs/                 # Prince.Jobs.sln — lean, single project, hosts Hangfire
 └── Frontend/
-    ├── prince-core/          # Vue 3 + Vite + Vuetify + TS — served at /
-    └── prince-checkout/      # Vue 3 + Vite + Vuetify + TS — served at /checkout
+    ├── prince-core-vue/       # Vue 3 + Vite + Vuetify + TS — served at /vue
+    ├── prince-checkout-vue/   # Vue 3 + Vite + Vuetify + TS — served at /vue/checkout
+    ├── prince-core-react/     # React + Vite + TS — served at /react
+    └── prince-checkout-react/ # React + Vite + TS — served at /react/checkout
 ```
+
+Vue and React apps are parallel implementations of the same two pages (core, checkout), kept side
+by side deliberately — see `Docs/decisions.md` ("React added alongside Vue"). Nothing currently
+serves `/` — decide whether it should redirect to one of the four apps or stay unrouted before
+this goes further.
 
 Each backend service is its own `.sln` under `Backend/<ServiceName>/`. Each frontend app is its own Vite project under `Frontend/<app-name>/`. Every service (backend and frontend) has a `Dockerfile` and is wired into the root `docker-compose.yml` and `reverse-proxy/nginx.conf`.
 
-**If a frontend app is served under a non-root path** (like `prince-checkout` at `/checkout`), its Vite `base` config must match that path — otherwise built asset URLs resolve against the wrong root and get swallowed by another route. Check whether the app's router reads `import.meta.env.BASE_URL` (Vite sets this from `base` automatically) before adding manual base-path wiring elsewhere.
+**Every frontend app here is served under a non-root path** (e.g. `prince-checkout-vue` at `/vue/checkout`), so its Vite `base` config must match that path — otherwise built asset URLs resolve against the wrong root and get swallowed by another route. Check whether the app's router reads `import.meta.env.BASE_URL` (Vite sets this from `base` automatically) before adding manual base-path wiring elsewhere.
 
 Each service directory has its own `CLAUDE.md` with rules specific to that project. This file covers what applies everywhere.
 
