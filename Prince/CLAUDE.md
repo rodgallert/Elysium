@@ -20,8 +20,8 @@ Prince/
     └── prince-checkout-react/ # React + Vite + TS — served at /react/checkout
 ```
 
-Vue and React apps are parallel implementations of the same two pages (core, checkout), kept side
-by side deliberately — see `Docs/decisions.md` ("React added alongside Vue"). Nothing currently
+Vue and React apps are parallel implementations of the same two pages (core, checkout) — the React
+apps are Vite scaffolds so far — kept side by side deliberately — see `Docs/decisions.md` ("React added alongside Vue"). Nothing currently
 serves `/` — decide whether it should redirect to one of the four apps or stay unrouted before
 this goes further.
 
