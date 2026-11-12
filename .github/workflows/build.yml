@@ -1,0 +1,87 @@
+# Builds and tests every .NET solution and every frontend in the repository, and checks the service boundaries.
+name: Build
+
+# One build per change: pushes build only main and release branches, every other branch builds through its pull request.
+# Changes that only touch Markdown (docs, notes) skip the build.
+on:
+  push:
+    branches: [main, 'release/**']
+    paths-ignore: ['**/*.md']
+  pull_request:
+    paths-ignore: ['**/*.md']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or PR cancels the older run
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  boundaries:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the service boundaries
+        run: tools/check-boundaries.sh
+
+  dotnet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      # Every solution builds on its own, since services don't share a solution
+      - name: Build and test every solution
+        run: |
+          mapfile -t solutions < <(find . -name '*.sln' | sort)
+          for sln in "${solutions[@]}"; do
+            echo "::group::$sln"
+            dotnet test "$sln" -c Release
+            echo "::endgroup::"
+          done
+
+  # Every folder with a package.json under */Frontend/ is a frontend; found at run time, so adding an app needs no workflow change
+  find-frontends:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      apps: ${{ steps.find.outputs.apps }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: find
+        run: echo "apps=$(find . -path '*/Frontend/*/package.json' -not -path '*/node_modules/*' -printf '%h\n' | sed 's|^\./||' | sort | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+
+  frontends:
+    needs: find-frontends
+    if: needs.find-frontends.outputs.apps != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.find-frontends.outputs.apps) }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: Lint (when the app has a lint script)
+        run: |
+          if jq -e '.scripts.lint' package.json >/dev/null; then npm run lint; else echo "No lint script"; fi
