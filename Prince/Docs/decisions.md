@@ -220,3 +220,12 @@ The private parameterless EF constructors (`private Producer() { }`, etc.) are *
 ## 2026-08-17 — Plan scope: one concrete step at a time, not the whole vision upfront
 
 An early planning pass tried to lay out the entire multi-service/docker/database vision as one big plan before any code was written. Rejected in favor of building one small, concrete piece at a time (move the solution, then scaffold Checkout, then scaffold Jobs, ...), confirming architecture decisions at the point each piece is actually being built rather than pre-deciding everything up front. See the root `CLAUDE.md` for how this should shape future work in this repo.
+
+## 2026-11-12 — File storage moves to Silo
+
+MinIO's `minio/minio` and `minio/mc` images stopped being published (Docker Hub reports the repositories as gone; the quay.io copies need a login), so `docker compose up` failed at `file-storage`. Replaced with **Silo** (`pgsty/silo`), a maintained MinIO fork: same S3 API, same `MINIO_*` settings, same health endpoint (`/minio/health/live`), on-disk format compatible, and a bundled client (`mcli`). The bucket-creation step now runs on the same image with `mcli`, so `minio/mc` is gone too.
+
+- Pinned to a release tag (`RELEASE.2026-11-12T00-00-00Z`), never `latest`, so a vanished or changed tag can't break the stack silently again.
+- Silo is maintained by a single company (Pigsty) and licensed AGPL-3.0; running it unmodified as a separate container carries no obligation for our code. Because the app will talk to it only through standard S3 APIs, switching to another S3-compatible store later is a configuration change.
+- Verified: the server starts, the health endpoint answers 200, and `mcli` creates the `product-files` bucket.
+

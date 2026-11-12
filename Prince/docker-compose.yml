@@ -66,7 +66,8 @@ services:
       retries: 5
 
   file-storage:
-    image: minio/minio:latest
+    # Silo: a maintained MinIO fork (MinIO's own images are no longer published); same S3 API and MINIO_* settings
+    image: pgsty/silo:RELEASE.2026-11-12T00-00-00Z
     environment:
       MINIO_ROOT_USER: ${FILE_STORAGE_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${FILE_STORAGE_ROOT_PASSWORD}
@@ -83,11 +84,12 @@ services:
       retries: 10
 
   file-storage-init:
-    image: minio/mc:latest
+    # Same image as the server: its bundled client (mcli) creates the bucket
+    image: pgsty/silo:RELEASE.2026-11-12T00-00-00Z
     entrypoint: >
       /bin/sh -c "
-      mc alias set local http://file-storage:9000 ${FILE_STORAGE_ROOT_USER} ${FILE_STORAGE_ROOT_PASSWORD} &&
-      mc mb --ignore-existing local/${FILE_STORAGE_BUCKET}
+      mcli alias set local http://file-storage:9000 ${FILE_STORAGE_ROOT_USER} ${FILE_STORAGE_ROOT_PASSWORD} &&
+      mcli mb --ignore-existing local/${FILE_STORAGE_BUCKET}
       "
     depends_on:
       file-storage:
