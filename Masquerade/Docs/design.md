@@ -190,7 +190,7 @@ authenticator for passkeys); everything else is automated.
 - Sign out of this session, or **everywhere** (step-up). The order is always: commit to the
   database (with a revocation outbox row) → write Redis → reply. If Redis fails, the reply is **503
   "try again"** and a reconciler re-applies pending revocations within about 5 seconds. On a Redis
-  restart, entries revoked in the last 10 minutes are rebuilt from the database.
+  restart, entries revoked in the last 15 minutes are rebuilt from the database (section 10).
 - Takes effect on the **next request** through Keeper. Product backends also get an OIDC
   back-channel logout call, plus an event for catch-up if they were down. **Back-channel logout is
   built by us** (OpenIddict 7.x doesn't send logout tokens): a signed `logout_token` posted to each
@@ -345,7 +345,7 @@ id, Identity holds only credential material, and the domain model has no library
 | `session_authorizations` | session, product, OpenIddict authorization | One authorization per (`sid`, product), enforced by unique keys and a composite foreign key. |
 | `product_requirements` | product, version, required fields | The product owns its requirements version. |
 | `activations` | account, product, granted scopes, requirements version granted, activated at, deactivated at | One activation per account and product; re-activating reuses the row. The activation decides whether it covers the product's current requirements. |
-| `revocations` + `revocation_outbox` | kind (session / account / activation), subject, created at, reason; applied at | Written in the same transaction as the change. Redis is rebuilt from the last 10 minutes; the reconciler applies anything unapplied. Kept at least 24 hours. |
+| `revocations` + `revocation_outbox` | kind (session / account / activation), subject, created at, reason; applied at | Written in the same transaction as the change. Redis is rebuilt from the last 15 minutes (section 10); the reconciler applies anything unapplied. Kept at least 24 hours. |
 | `audit_events` | partitioned by month; occurred at, account id (no foreign key), `sid`, event (a closed list), result, actor, truncated IP, keyed IP hash, correlation id, details (no personal data) | Append-only: the application can't update or delete rows; only a maintenance role drops expired partitions. Survives account deletion. |
 | Identity's tables | users, external logins, passkeys | Credential material only; no roles. |
 | OpenIddict's tables | applications, authorizations, scopes, tokens | Never edited by hand; its own cleanup job. |

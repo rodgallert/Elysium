@@ -81,7 +81,7 @@ concepts (Product, Offer, Property, Lease) stay inside each product.
   └────────────────────────────────────────────────────┘
 ```
 
-**Proposed — every product keeps a backend of its own.** Business rules can't live in the
+**Decided — every product keeps a backend of its own.** Business rules can't live in the
 frontend: anything in the browser can be bypassed (prices, fees, access checks). Browser apps
 also shouldn't hold tokens; the product backend keeps them and gives the browser an HTTP-only
 cookie (OWASP/IETF guidance for browser-based OAuth apps).
@@ -162,7 +162,7 @@ producer, buyer, landlord and tenant live in the product backend.
 
 ## 7. Login methods and OWASP compliance
 
-**Proposed — target OWASP ASVS 5.0 Level 2** for Accounts, which is the level OWASP recommends
+**Decided — target OWASP ASVS 5.0 Level 2** for Accounts, which is the level OWASP recommends
 for applications handling personal or financial data. Requirement numbers below are ASVS 5.0.
 
 ### 7.1 Email + password
@@ -227,7 +227,7 @@ relaxing it. Passkeys already satisfy it; **password-only accounts don't.** Opti
 password-only accounts, mitigated by the breached-password check, rate limiting, security
 notifications and prompts to add a passkey. TOTP is the next authentication feature after v1.
 
-## 8. Immediate token invalidation — **Decided requirement, Proposed design**
+## 8. Immediate token invalidation — **Decided**
 
 **Requirement:** any token can be invalidated at any moment, and the user is signed out on their
 **next request** — not when the token happens to expire. (ASVS 7.4.1 explicitly calls out that
@@ -245,12 +245,14 @@ it expires. Revocation needs some state that's checked on every request.
 
   | Entry | Revokes | Used for |
   |---|---|---|
-  | `session:{sid}` | one sign-in session (one device/browser) | sign out, "end this session" |
-  | `account:{sub}` → cutoff time | every token issued before the cutoff | sign out everywhere, password reset, account disabled or deleted (7.4.2) |
-  | `activation:{sub}:{client_id}` → cutoff time | every token for one product | product deactivated |
+  | `rev:s:{sid}` | one sign-in session (one device/browser) | sign out, "end this session" |
+  | `rev:a:{sub}` → cutoff time | every token issued before the cutoff | sign out everywhere, password reset, account disabled or deleted (7.4.2) |
+  | `rev:p:{sub}:{client_id}` → cutoff time | every token for one product | product deactivated |
 
-  Each entry expires automatically after the maximum token lifetime — by then any token it
-  revokes would have expired anyway — so the store never grows unbounded.
+  Each entry expires automatically after **15 minutes** — the 10-minute token lifetime plus clock
+  tolerance, reconciler lag and a margin — by then any token it revokes has expired anyway, so the
+  store never grows unbounded. The exact layout (including a global cutoff and a "store ready"
+  marker) is in `Masquerade/Docs/design.md`, section 10.
 - **Accounts writes the entry before replying** to the logout/reset/disable request, so it's in
   effect from the next request onward. Refresh tokens for the same session are revoked at the
   same time, so no new access tokens can be minted.
@@ -281,7 +283,7 @@ every product. The revocation store gives the same guarantee with a single fast 
 1. **Serves many products at once.** Each record belongs to one product, determined from the
    caller's token, never from the request body.
 2. **Opaque references.** Shared services store ids they don't interpret.
-3. **Owns its data.** One database per service. **Proposed:** all on the same Postgres server to
+3. **Owns its data.** One database per service. **Decided:** all on the same Postgres server to
    keep `docker compose up` light. No service reads another's tables.
 4. **APIs and events.** HTTP for immediate answers; messages through the broker otherwise
    (section 10).
@@ -404,7 +406,7 @@ Several popular libraries changed licence in 2025, which affects the choice:
 ## 14. What this overturns
 
 - **Root `README.md`:** "no shared tooling, no shared dependencies" — replaced by the ecosystem
-  model. README to be rewritten once the first shared service exists.
+  model; the README describes the ecosystem.
 - **Prince's `CLAUDE.md` / `architecture.md`:** one shared database for everything, Core owns the
   whole domain, new services reference Core's projects.
 - **Repository layout:** services become top-level folders in Elysium; Prince becomes one of them.
