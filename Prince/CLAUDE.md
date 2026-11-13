@@ -14,13 +14,20 @@ Prince/
 │   ├── Checkout/             # Prince.Checkout.sln — lean, single project
 │   └── Jobs/                 # Prince.Jobs.sln — lean, single project, hosts Hangfire
 └── Frontend/
-    ├── prince-core/          # Vue 3 + Vite + Vuetify + TS — served at /
-    └── prince-checkout/      # Vue 3 + Vite + Vuetify + TS — served at /checkout
+    ├── prince-core-vue/       # Vue 3 + Vite + Vuetify + TS — served at /vue
+    ├── prince-checkout-vue/   # Vue 3 + Vite + Vuetify + TS — served at /vue/checkout
+    ├── prince-core-react/     # React + Vite + TS — served at /react
+    └── prince-checkout-react/ # React + Vite + TS — served at /react/checkout
 ```
+
+Vue and React apps are parallel implementations of the same two pages (core, checkout) — the React
+apps are Vite scaffolds so far — kept side by side deliberately — see `Docs/decisions.md` ("React added alongside Vue"). Nothing currently
+serves `/` — decide whether it should redirect to one of the four apps or stay unrouted before
+this goes further.
 
 Each backend service is its own `.sln` under `Backend/<ServiceName>/`. Each frontend app is its own Vite project under `Frontend/<app-name>/`. Every service (backend and frontend) has a `Dockerfile` and is wired into the root `docker-compose.yml` and `reverse-proxy/nginx.conf`.
 
-**If a frontend app is served under a non-root path** (like `prince-checkout` at `/checkout`), its Vite `base` config must match that path — otherwise built asset URLs resolve against the wrong root and get swallowed by another route. Check whether the app's router reads `import.meta.env.BASE_URL` (Vite sets this from `base` automatically) before adding manual base-path wiring elsewhere.
+**Every frontend app here is served under a non-root path** (e.g. `prince-checkout-vue` at `/vue/checkout`), so its Vite `base` config must match that path — otherwise built asset URLs resolve against the wrong root and get swallowed by another route. Check whether the app's router reads `import.meta.env.BASE_URL` (Vite sets this from `base` automatically) before adding manual base-path wiring elsewhere.
 
 Each service directory has its own `CLAUDE.md` with rules specific to that project. This file covers what applies everywhere.
 
@@ -38,7 +45,7 @@ Each service directory has its own `CLAUDE.md` with rules specific to that proje
 - **Code-first EF Core only.** No hand-written SQL for schema/database creation. Migrations run automatically at each service's own startup (`Database.MigrateAsync()` before `app.Run()`), not via a separate migrator step — idempotent, safe to run on every boot.
 - All services read the connection string from the same config key: `ConnectionStrings:Prince`.
 - **Any `DbContext` added against this shared database needs its own explicitly-named migrations history table** (`MigrationsHistoryTable(...)`), not EF's default `__EFMigrationsHistory`. Multiple `DbContext`s (currently `PrinceDbContext` in Core, `JobsIdentityDbContext` in Jobs) sharing one physical database will collide on that table otherwise — hit this exact bug wiring up `PrinceDbContext`, see `Docs/decisions.md` ("EF Core wired up").
-- **File/object storage is MinIO** (`file-storage` service in `docker-compose.yml`), not AWS S3 — chosen specifically to avoid depending on a real AWS account for a portfolio project. It's S3-API-compatible, so any standard S3 client SDK works against it. Buckets are created via the one-shot `file-storage-init` service (`minio/mc`, same `service_completed_successfully` pattern as the DB migrators), not a manual script. Nothing in the app talks to it yet — see `Docs/decisions.md` ("File storage: MinIO instead of AWS S3").
+- **File/object storage is Silo** (`pgsty/silo`, a maintained MinIO fork; `file-storage` service in `docker-compose.yml`), not AWS S3 — chosen specifically to avoid depending on a real AWS account for a portfolio project. It's S3-API-compatible, so any standard S3 client SDK works against it; talk to it only through S3 APIs so the store stays replaceable. Buckets are created via the one-shot `file-storage-init` service (Silo's bundled `mcli`, same `service_completed_successfully` pattern as the DB migrators), not a manual script. Pin a `RELEASE.*` tag, never `latest`. Nothing in the app talks to it yet — see `Docs/decisions.md` ("File storage: MinIO instead of AWS S3" and "File storage moves to Silo").
 
 ## Naming
 

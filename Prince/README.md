@@ -12,13 +12,15 @@ A monorepo of independently deployable services, orchestrated with Docker Compos
 
 | Service | Stack | Path | Role |
 |---|---|---|---|
-| Core web | Vue 3 + Vite + Vuetify | `/` | Producer/product/offer browsing, sign up, sign in |
-| Checkout web | Vue 3 + Vite + Vuetify | `/checkout` | Purchase flow, deployed separately |
+| Core web (Vue) | Vue 3 + Vite + Vuetify | `/vue` | Producer/product/offer browsing, sign up, sign in |
+| Checkout web (Vue) | Vue 3 + Vite + Vuetify | `/vue/checkout` | Purchase flow, deployed separately |
+| Core web (React) | React + Vite | `/react` | The core pages, to be built in React alongside Vue (scaffold today) |
+| Checkout web (React) | React + Vite | `/react/checkout` | The purchase flow, to be built in React alongside Vue (scaffold today) |
 | Core API | .NET 10, ASP.NET Core, EF Core | `/api` | Source of truth for domain data; full clean-architecture layering |
 | Checkout API | .NET 10, ASP.NET Core | `/api/checkout` | Checkout/purchase orchestration, scalable independently of Core |
 | Jobs | .NET 10, ASP.NET Core, Hangfire | `/jobs` | Background processing, admin-only dashboard with its own auth |
 | Reverse proxy | nginx | — | Path-routes everything above to simulate a single domain |
-| File storage | MinIO (S3-compatible) | — | Self-hosted object storage for uploaded product files |
+| File storage | Silo (S3-compatible, a maintained MinIO fork) | — | Self-hosted object storage for uploaded product files |
 | Database | PostgreSQL | — | One shared database across all backend services |
 
 Full design rationale — including *why* things are shaped this way, not just what they are — lives in [`Docs/`](Docs/):
@@ -31,8 +33,8 @@ Each service also carries its own `CLAUDE.md` with conventions specific to that 
 ## Tech stack
 
 - **Backend**: .NET 10, ASP.NET Core, Entity Framework Core (code-first, PostgreSQL), Hangfire, xUnit
-- **Frontend**: Vue 3, Vite, Vuetify, TypeScript
-- **Infrastructure**: Docker Compose, nginx, PostgreSQL, MinIO
+- **Frontend**: Vue 3 with Vuetify, and React — the same pages to be built in both, side by side (the React apps are scaffolds today); Vite, TypeScript
+- **Infrastructure**: Docker Compose, nginx, PostgreSQL, Silo
 
 ## Getting started
 
@@ -43,18 +45,19 @@ cp .env.example .env
 docker compose up --build
 ```
 
-That's it — Postgres and MinIO come up, database migrations run automatically, and every service starts in the right order. Once everything's healthy:
+That's it — Postgres and Silo come up, database migrations run automatically, and every service starts in the right order. Once everything's healthy:
 
 | What | URL |
 |---|---|
-| Core site | http://localhost:8080/ |
-| Checkout | http://localhost:8080/checkout/ |
+| Core site (Vue / React) | http://localhost:8080/vue/ · http://localhost:8080/react/ |
+| Checkout (Vue / React) | http://localhost:8080/vue/checkout/ · http://localhost:8080/react/checkout/ |
+| Database (Postgres) | `localhost:5432`, this machine only (credentials in `.env`) |
 | Core API | http://localhost:8080/api/ |
 | Checkout API | http://localhost:8080/api/checkout/ |
 | Jobs dashboard | http://localhost:8080/jobs/ (login required — see `.env`) |
-| MinIO console | http://localhost:9001/ |
+| File storage console | http://localhost:9001/ |
 
-`.env.example` documents every configurable value (database credentials, Jobs admin login, MinIO credentials) with safe local-dev defaults — review it before deploying this anywhere beyond your own machine.
+`.env.example` documents every configurable value (database credentials, Jobs admin login, file-storage credentials) with safe local-dev defaults — review it before deploying this anywhere beyond your own machine.
 
 ## Project status
 
