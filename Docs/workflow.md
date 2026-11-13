@@ -13,11 +13,11 @@ main                              trunk: every finished ticket; publishes the de
 | Version | What it is | Where it comes from | Images |
 |---|---|---|---|
 | **Development** | Every service at the latest `main` | Every merge into `main` builds and publishes every image (see Development images) | `ghcr.io/rodgallert/elysium-<service>-<component>:main` and `:main-<short sha>` |
-| **Production** | Every service at its released version | `docker-compose.prod.yml`, which pins each service's image to a version | `ghcr.io/rodgallert/elysium-<service>-<component>:<x.y.z>` |
+| **Production** | Every service at its released version | `docker-compose.prod.yml`, which pins each image to a version and digest | `ghcr.io/rodgallert/elysium-<service>-<component>:<x.y.z>@sha256:<digest>` |
 
 - **`docker-compose.prod.yml` is the list of what's in production.** Reading it answers "which version of each service is released"; its history is the release history. Nobody needs to browse tags to find out.
 - `docker-compose.yml` runs the development version (built from source locally).
-- Git tags (`<service>-v<x.y.z>`) exist so every release points at an exact commit, but **CI creates them**, never a person (see Releases).
+- Git tags (`<part>-v<x.y.z>`, see Releases) exist so every release points at an exact commit, but **CI creates them**, never a person.
 
 ## Development images
 
@@ -140,23 +140,75 @@ Check these on your own branch first; the review checks them again. Items that d
 
 ## Releases (per service)
 
-A service is released when its milestone's tickets are on `main` and its phase checkpoint (if any) has passed:
-1. **Release ticket and PR** (`chore/release-<service>-<x.y.z>` → `main`, title `chore(release): <service> <x.y.z>`), changing three things together:
-   - the service's version (its project file);
-   - its `CHANGELOG.md` (in the service's folder): the "Unreleased" entries move under the new version, with a "Breaking changes" heading (every breaking change since its last release, with what can break and what to do, or "None") and a "Known issues" line;
-   - its pinned image version in `docker-compose.prod.yml`.
-2. **Smoke test, security pass and performance pass** for that service, on the release PR's head: a clean `docker compose up` with every shipped **Done when** of the service once; the security checklist for what the release touches; response times and resource use against the roadmap's budgets. Anything found is fixed by a `fix/` ticket before the release PR merges. The release PR records the results, and it isn't approved without them.
-3. **The PO approves and merges** the release PR. That merge is the release.
-4. **CI does the rest** from that merge commit: creates the tag `<service>-v<x.y.z>`, builds and publishes the service's images (`ghcr.io/rodgallert/elysium-<service>-<component>:<x.y.z>`), and creates a GitHub Release with the changelog section. Then close the service's milestone.
+### Versions and release parts
 
-Several services can be released in one PR when they must ship together (a coordinated breaking change); each still gets its own version, changelog section and tag.
+- A **release part** is what gets one version, one git tag `<part>-v<x.y.z>` and one GitHub Release. Every image of a part is released at the part's version.
+- By default a **service is one part**, named after it (`masquerade`), and its version lives where its stack keeps it, at the service's root: `<VersionPrefix>` in `Directory.Build.props` for .NET (a `.sln` can't hold build properties), else `version` in `package.json`. Every release bumps it (major, minor or patch). Its changelog is the `CHANGELOG.md` next to that file. A service without a version file has no part yet and can't be released; its first release PR adds the file.
+- A service that releases **several parts** (for example an API and an app, each with its own version) declares them in its `docker-compose.yml`, and every image belongs to exactly one part:
+
+  ```yaml
+  x-release-parts:
+    prince-api:                               # starts with the service's name
+      version: Backend/Directory.Build.props  # relative to the service folder; its CHANGELOG.md sits next to it
+      images: [core-api, checkout-api, jobs-api]
+  ```
+- `tools/release-parts.sh` lists every part with its version, changelog and images.
+
+### Releasing
+
+A part is released when its milestone's tickets are on `main` and its phase checkpoint (if any) has passed:
+1. **Release ticket and PR** (`chore/release-<part>-<x.y.z>` → `main`, title `chore(release): <part> <x.y.z>`), changing together:
+   - the part's version (its version file);
+   - its `CHANGELOG.md`: the "Unreleased" entries move under a `## <x.y.z>` heading, with a "Breaking changes" heading (every breaking change since its last release, with what can break and what to do, or "None") and a "Known issues" line;
+   - for a service's first release, its blocks in `docker-compose.prod.yml`, with `image: ghcr.io/rodgallert/elysium-<service>-<component>:<x.y.z>` (tag only).
+2. **Prepare run:** Actions → Release → Run workflow, on the release PR's branch, mode `prepare`, the part's name. It builds every image of the part from the branch, pushes it by digest (no tag yet), attaches a signed SBOM and build provenance, writes `<image>:<x.y.z>@sha256:<digest>` into `docker-compose.prod.yml`, commits that to the branch ("chore(release): pin ...") and starts the branch's build. A change to the service after this needs another prepare run: the release fails when the merged service folder differs from the one the images were built from.
+3. **Smoke test, security pass and performance pass** for that part, on the release PR's head, **with the prepared images** (the same digests that ship):
+   - **Migrating from the previous version:** start the current production list from `main` (`git show origin/main:docker-compose.prod.yml > /tmp/prev.yml`, then `docker compose -p elysium-release -f /tmp/prev.yml up -d`), use it until it has data, then switch to the release PR's file (`docker compose -p elysium-release -f docker-compose.prod.yml up -d`): the new images start on the previous version's database, so their migrations run against real data. A first release has no previous version and skips this.
+   - Then every shipped **Done when** of the part once; the security checklist for what the release touches; response times and resource use against the roadmap's budgets.
+   - Anything found is fixed by a `fix/` ticket before the release PR merges, then prepare again. The release PR records the results, and it isn't approved without them.
+4. **The PO approves and merges** the release PR. That merge is the release.
+5. **CI does the rest** from the merge commit (the `release` job in `.github/workflows/release.yml`, `tools/release-publish.sh`):
+   - it checks every pinned digest carries SBOM and provenance attestations signed by this repository's release workflow, and that the service folder is unchanged since the prepare run;
+   - tags each prepared image `<x.y.z>` (the same digest; nothing is rebuilt);
+   - creates the annotated git tag `<part>-v<x.y.z>` on the merge commit and a GitHub Release (not marked "latest") with the changelog section and the SBOMs.
+
+   Then close the milestone. If the job fails, tell the PO what failed; never create the tag by hand.
+
+Several parts can be released in one PR when they must ship together (a coordinated breaking change); each still gets its own version, changelog section and tag. CI finds them as the parts whose version file the merge commit changed, and both signals must agree: a changed version outside a `chore(release):` commit, or a `chore(release):` commit that changes no version, fails the release workflow.
+
+### Checks on the production list
+
+`tools/check-prod-pins.sh` runs in every build (`release-checks` in `build.yml`):
+- **Every pull request, offline:** every service runs a published image (no `build`), pinned as `<name>:<tag>@sha256:<digest>`, from an allowed registry (`docker.io`, `ghcr.io`, `mcr.microsoft.com`). Our images are tagged with their part's version. Third-party tags are full versions: no `latest`, `stable` and the like, no bare major version (`17-alpine`).
+- **Our images, online:** the digest exists, and the version tag, once it exists, points at it. Version tags never move.
+- **A pull request that adds or changes a third-party line:** its tag must resolve to the pinned digest now (the multi-arch index digest, as `docker buildx imagetools inspect` shows it).
+- **A release PR** (title `chore(release): ...`, and the build the prepare run starts): every pinned digest, ours and third-party, must be pullable.
+- Otherwise third-party drift (upstream rebuilt a tag, or dropped an old digest) is a warning: production keeps running the pinned digest. Bumping third-party pins is #34's scheduled job.
+- **Accepted risk:** upstream signatures of third-party images (Postgres, Silo, Redis, ...) are not verified; the pinned digest is what we trust. There are few third-party images for now; revisit when that changes.
+
+### Dry runs
+
+Actions → Release → Run workflow, mode `dry-run`, any part and branch (a service without a version file can be rehearsed at a given version). It goes through every step: the plan, each image built (not pushed), its SBOM, signed SBOM and provenance attestations (for a digest that is never pushed), the release notes, the production pin as a diff, and the image tag, git tag and Release commands. It pushes no image and creates no tag or Release; the result is the run's summary. Every pull request that changes the release tooling runs the same dry run without signing. Anyone with write access can start either manual run.
+
+### Version tags (repository setting)
+
+A tag ruleset keeps version tags to CI: Settings → Rules → Rulesets → New tag ruleset, named "Release tags", enforcement **Active**, target tags matching `*-v*` (include by pattern `refs/tags/*-v*`), rules **Restrict creations**, **Restrict updates**, **Restrict deletions**, bypass list: the **GitHub Actions** app (always). `phase-*-done` tags don't match. If GitHub doesn't accept the app as a bypass actor, use the fallback: the same ruleset with only **Restrict updates** and **Restrict deletions** and no bypass, so CI can still create version tags and nobody can move or delete one. Optionally also turn on Settings → General → **Immutable releases**, so a published Release and its tag can't be changed.
+
+### Production
+
+Production runs only what `docker-compose.prod.yml` pins, never `:main`, and changes only by a deliberate, manual update after a release PR merges:
+
+```
+git pull
+docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
+```
 
 ## Hotfixes
 
 An urgent fix to a released version:
 1. Fix it on `main` first, as a normal `fix/` ticket.
-2. If `main` holds nothing else for that service since its release, release it normally as a patch version.
-3. Otherwise, create `release/<service>-<x.y>` from the service's release tag (once per minor version), cherry-pick the fix onto a `hotfix/<service>-<x.y.z>` branch from it, and open the PR into the release branch with the patch version and changelog entry. CI publishes the image from that merge; then a PR into `main` updates the production pin and the changelog.
+2. If `main` holds nothing else for that part since its release, release it normally as a patch version.
+3. Otherwise, create `release/<part>-<x.y>` from the part's release tag (once per minor version), cherry-pick the fix onto a `hotfix/<part>-<x.y.z>` branch from it, bump the patch version and the changelog, open the PR into the release branch, and run the prepare run on the hotfix branch. Its merge releases the patch like a release PR into `main`. Then a PR into `main` (`chore(release): ...`) copies the version, the changelog and the production pin; CI sees that version is already released and does nothing.
 
 ## Pushing
 

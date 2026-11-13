@@ -11,6 +11,11 @@ on:
   pull_request:
     paths-ignore: ['**/*.md']
   workflow_dispatch:
+    inputs:
+      release:
+        description: Check the production pins as for a release PR (the release workflow's prepare run sets it)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -51,6 +56,29 @@ jobs:
             dotnet test "$sln" -c Release
             echo "::endgroup::"
           done
+
+  # docker-compose.prod.yml, the list of what's in production (tools/check-prod-pins.sh), and the release scripts'
+  # fixture tests. A pull request that adds or changes a third-party pin must pin its tag's current digest; a
+  # release PR (title "chore(release): ...", or the build the prepare run starts) must have every digest pullable.
+  release-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Release scripts' fixture tests
+        run: tools/tests/release-tools.sh
+      - name: Check the production pins
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+          RELEASE: ${{ inputs.release || (github.event_name == 'pull_request' && startsWith(github.event.pull_request.title, 'chore(release):')) }}
+        run: |
+          args=()
+          [ -z "$BASE" ] || args+=(--base "$BASE")
+          [ "$RELEASE" != true ] || args+=(--release)
+          tools/check-prod-pins.sh "${args[@]}"
 
   # Every folder with a package.json under */Frontend/ is a frontend; found at run time, so adding an app needs no workflow change
   find-frontends:
