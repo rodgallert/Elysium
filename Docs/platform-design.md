@@ -246,7 +246,7 @@ it expires. Revocation needs some state that's checked on every request.
   | Entry | Revokes | Used for |
   |---|---|---|
   | `rev:s:{sid}` | one sign-in session (one device/browser) | sign out, "end this session" |
-  | `rev:a:{sub}` → cutoff time | every token issued before the cutoff | sign out everywhere, password reset, account disabled or deleted (7.4.2) |
+  | `rev:a:{sub}` → cutoff time | every token issued at or before the cutoff (`iat` equal to the cutoff counts as revoked) | sign out everywhere, password reset, account disabled or deleted (7.4.2) |
   | `rev:p:{sub}:{client_id}` → cutoff time | every token for one product | product deactivated |
 
   Each entry expires automatically after **15 minutes** — the 10-minute token lifetime plus clock
