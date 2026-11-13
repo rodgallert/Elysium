@@ -29,7 +29,7 @@ The repo runs on the ticket workflow, and the work already done locally is lande
 - [x] Repository settings: squash merges only, branches deleted on merge, `main` protected (changes only through pull requests; required checks once a check runs on every PR, Markdown-only included), labels, the "Elysium" project board, milestones
 - [x] Prince infrastructure fixes: frontend healthchecks, proxy redirects keeping the port, Postgres reachable from the host
 - [x] Prince frontends restructured onto `/vue`, `/vue/checkout`, `/react`, `/react/checkout`
-- [ ] File storage on Silo (`pgsty/silo`, pinned release) instead of MinIO, with the bucket created by its bundled client
+- [x] File storage on Silo (`pgsty/silo`, pinned release) instead of MinIO, with the bucket created by its bundled client
 - [ ] Publish development images: every merge into `main` builds and pushes the changed services to `ghcr.io/rodgallert/elysium-<service>:main`
 - [ ] Release automation: `docker-compose.prod.yml` as the list of what's in production; merging a release PR tags `<service>-v<x.y.z>`, publishes the versioned image and creates the GitHub Release
 - [ ] Platform design document (`Docs/platform-design.md`)
