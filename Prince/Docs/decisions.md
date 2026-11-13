@@ -237,3 +237,11 @@ Added a path-based scheme for running a Vue and a React implementation of the sa
 - **Postgres published on host port `5432`** so the database can be reached directly with a DB client.
 
 **Left open, not decided here:** nothing currently serves `/` — core-web moved to `/vue` and no replacement root route was added. Decide whether `/` should redirect to one of the four apps (and which) or stay unrouted, before this goes further.
+
+## 2026-11-12 — File storage moves to Silo
+
+MinIO's `minio/minio` and `minio/mc` images stopped being published (Docker Hub reports the repositories as gone; the quay.io copies need a login), so `docker compose up` failed at `file-storage`. Replaced with **Silo** (`pgsty/silo`), a maintained MinIO fork: same S3 API, same `MINIO_*` settings, same health endpoint (`/minio/health/live`), documented as on-disk compatible (not tested here), and a bundled client (`mcli`). The bucket-creation step now runs on the same image with `mcli`, so `minio/mc` is gone too.
+
+- Pinned to a release tag (`RELEASE.2026-11-12T00-00-00Z`), never `latest`, so a vanished or changed tag can't break the stack silently again.
+- Silo is maintained by a single company (Pigsty) and licensed AGPL-3.0; running it unmodified as a separate container carries no obligation for our code. Because the app will talk to it only through standard S3 APIs, switching to another S3-compatible store later is a configuration change. Product owner's decision: the AGPL licence makes no difference for us, because Elysium isn't distributed and Silo runs unmodified as its own container.
+- Verified: the server starts, the health endpoint answers 200, and `mcli` creates the `product-files` bucket.
