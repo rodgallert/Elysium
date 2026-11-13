@@ -2,7 +2,7 @@ namespace Prince.Domain.Models.Products;
 
 /// <summary>
 /// A file uploaded by the producer and stored on the platform's object storage (see the
-/// `file-storage` service in docker-compose.yml — MinIO, an S3-compatible self-hosted
+/// `file-storage` service in docker-compose.yml — Silo, an S3-compatible self-hosted
 /// alternative to AWS S3). StorageKey is the object's key/path within that storage, not a
 /// public URL — actual download access (e.g. presigned URLs) is an App/Services concern,
 /// not something Domain should know how to construct.
