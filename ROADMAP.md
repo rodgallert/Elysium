@@ -25,7 +25,7 @@ service release; `docker-compose.prod.yml` lists what's in production.
 The repo runs on the ticket workflow, and the work already done locally is landed through it.
 
 - [x] Workflow and tooling: `CLAUDE.md`, `Docs/workflow.md`, ticket and review checklists, board scripts, boundary check
-- [ ] CI: build and test every .NET solution, build and lint every frontend, run the boundary check, skip Markdown-only changes
+- [x] CI: build and test every .NET solution, build and lint every frontend, run the boundary check, skip Markdown-only changes
 - [x] Repository settings: squash merges only, branches deleted on merge, `main` protected (changes only through pull requests; required checks once a check runs on every PR, Markdown-only included), labels, the "Elysium" project board, milestones
 - [x] Prince infrastructure fixes: frontend healthchecks, proxy redirects keeping the port, Postgres reachable from the host
 - [x] Prince frontends restructured onto `/vue`, `/vue/checkout`, `/react`, `/react/checkout`
