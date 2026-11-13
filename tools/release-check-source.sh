@@ -8,10 +8,10 @@
 #
 # Without --attested (pull requests): the build commit is the images' org.opencontainers.image.revision label,
 # read from the registry. An early check that the release job repeats.
-# With --attested (the release job): the build commit comes from the verified provenance certificate
-# (sourceRepositoryDigest), which the build can't choose; the label must agree. Both attestations (provenance
-# and SBOM) must be signed by this repository's release workflow on a GitHub-hosted runner, and the attested
-# SBOMs are written to <sbom dir>.
+# With --attested (the release job): the provenance and SBOM attestations must be signed by this repository's
+# release workflow, on a GitHub-hosted runner, for that commit: the certificate's sourceRepositoryDigest, which
+# the build can't choose, must equal the label (gh attestation verify --source-digest). The attested SBOMs are
+# written to <sbom dir>.
 # Needs GITHUB_REPOSITORY (owner/repo) and, with --attested, GH_TOKEN. RELEASE_REGISTRY overrides ghcr.io.
 set -euo pipefail
 
@@ -45,14 +45,16 @@ while IFS= read -r image; do
     label="$(docker buildx imagetools inspect "$name@$digest" --format '{{json .Image}}' 2>/dev/null |
         jq -r '.config.Labels["org.opencontainers.image.revision"] // empty' || true)"
     [ -n "$label" ] || fail "$image: $name@$digest can't be read, or has no revision label"
+    # A full commit id, before any git command or flag sees it
+    [[ "$label" =~ ^[0-9a-f]{40}$ ]] || fail "$image: revision label '$label' is not a full commit id"
     commit="$label"
 
     if [ -n "$sboms" ]; then
-        verify=(gh attestation verify "oci://$name@$digest" -R "$repository" --signer-workflow "$signer" --deny-self-hosted-runners --format json)
-        provenance="$("${verify[@]}")" || fail "$image: no build provenance signed by $signer"
-        commit="$(jq -r '.[0].verificationResult.signature.certificate.sourceRepositoryDigest // empty' <<<"$provenance")"
-        [ -n "$commit" ] || fail "$image: the provenance certificate names no source commit"
-        [ "$commit" = "$label" ] || fail "$image: built from $commit (certificate), but its revision label says $label"
+        # --source-digest: only attestations whose certificate names this commit count, so an attestation of the
+        # same digest from another run (another branch, another commit) can't be the one picked
+        verify=(gh attestation verify "oci://$name@$digest" -R "$repository" --signer-workflow "$signer"
+            --source-digest "$commit" --deny-self-hosted-runners --format json)
+        "${verify[@]}" >/dev/null || fail "$image: no build provenance signed by $signer for commit $commit"
         "${verify[@]}" --predicate-type https://spdx.dev/Document/v2.3 |
             jq '.[0].verificationResult.statement.predicate' >"$sboms/$image.spdx.json" ||
             fail "$image: no SBOM attestation signed by $signer"

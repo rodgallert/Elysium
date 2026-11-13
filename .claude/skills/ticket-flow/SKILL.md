@@ -65,11 +65,11 @@ A release part is a service, or one of the parts it declares (`Docs/workflow.md`
 ### `hotfix <ticket>`: fix a released version
 1. Fix it on `main` first as a normal `fix/` ticket.
 2. If `main` has nothing else for that part since its release, do `release` as a patch version. Otherwise:
-3. Create `release/<part>-<x.y>` from the part's release tag if it doesn't exist (`git push origin <part>-v<x.y.z>^{commit}:refs/heads/release/<part>-<x.y>`), branch `hotfix/<part>-<x.y.z+1>` from it (from the issue: `gh issue develop <n> -R rodgallert/Elysium --base release/<part>-<x.y> --name hotfix/<part>-<x.y.z+1>`), cherry-pick the fix, bump the patch version in the part's version file and the changelog, open the PR into the release branch, and run the Release workflow's `prepare` run on the hotfix branch.
+3. If `release/<part>-<x.y>` doesn't exist, ask the PO to create it from the part's release tag (`git push origin <part>-v<x.y.z>^{commit}:refs/heads/release/<part>-<x.y>`; only the repository admin may create release branches, `Docs/workflow.md`, "Version tags and release branches"). Then branch `hotfix/<part>-<x.y.z+1>` from it (from the issue: `gh issue develop <n> -R rodgallert/Elysium --base release/<part>-<x.y> --name hotfix/<part>-<x.y.z+1>`), cherry-pick the fix, bump the patch version in the part's version file and the changelog, open the PR into the release branch, and run the Release workflow's `prepare` run on the hotfix branch.
 4. After the PO merges it and CI releases it, open a PR into `main` (`chore(release): <part> <x.y.z+1>`) that copies the version, the changelog and the production pin; CI sees that version is already released.
 
 ## Rules
-- **Pushing:** the flow's steps push without asking: creating ticket, release and hotfix branches, pushing phase tags, and pushing a working branch's commits while its PR is open. Never force-push, never push commits to `main` or a release branch, never create release tags (CI does), and never merge: the PO merges.
+- **Pushing:** the flow's steps push without asking: creating ticket and hotfix branches, pushing phase tags, and pushing a working branch's commits while its PR is open. Never force-push, never push commits to `main` or a release branch, never create release tags (CI does) or release branches (the PO does), and never merge: the PO merges.
 - The board follows the work, never the other way round: move an issue when its step actually happens, not ahead of time.
 - New work found along the way (a bug, a "Later" item from a review) gets its own issue in **Backlog** with the right labels and milestone. Never widen a ticket silently.
 - If `tools/board.sh` fails (no `project` scope, board missing), still do the issue steps and tell the PO what failed.
