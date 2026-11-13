@@ -12,12 +12,35 @@ main                              trunk: every finished ticket; publishes the de
 
 | Version | What it is | Where it comes from | Images |
 |---|---|---|---|
-| **Development** | Every service at the latest `main` | Every merge into `main` builds and publishes the services it changed | `ghcr.io/rodgallert/elysium-<service>:main` and `:main-<short sha>` |
-| **Production** | Every service at its released version | `docker-compose.prod.yml`, which pins each service's image to a version | `ghcr.io/rodgallert/elysium-<service>:<x.y.z>` |
+| **Development** | Every service at the latest `main` | Every merge into `main` builds and publishes every image (see Development images) | `ghcr.io/rodgallert/elysium-<service>-<component>:main` and `:main-<short sha>` |
+| **Production** | Every service at its released version | `docker-compose.prod.yml`, which pins each service's image to a version | `ghcr.io/rodgallert/elysium-<service>-<component>:<x.y.z>` |
 
 - **`docker-compose.prod.yml` is the list of what's in production.** Reading it answers "which version of each service is released"; its history is the release history. Nobody needs to browse tags to find out.
 - `docker-compose.yml` runs the development version (built from source locally).
 - Git tags (`<service>-v<x.y.z>`) exist so every release points at an exact commit, but **CI creates them**, never a person (see Releases).
+
+## Development images
+
+The `publish` job in `.github/workflows/build.yml` publishes the development version. It runs on every push to `main` that changes more than Markdown, after the boundary check, every build and every test have passed, and never on pull requests or manual runs.
+
+- **What it builds:** every Compose service with a `build` section in a service's `docker-compose.yml` is one image. `tools/list-images.sh` reads the list, with each image's build context and Dockerfile, so a new image only needs its Compose service. Every build fails when a Dockerfile in the repo is built by no Compose service. Every image is built on every merge for now; building only what changed comes later, once build timings are known, because a wrong path filter leaves `:main` stale.
+- **Names:** flat, one package per image: `ghcr.io/rodgallert/elysium-<service>-<component>`, where `<service>` is the service's folder and `<component>` its Compose service name, in lower case. Prince today:
+
+  | Image | Built from |
+  |---|---|
+  | `elysium-prince-core-api` | `Prince/Backend/Core/Dockerfile` |
+  | `elysium-prince-checkout-api` | `Prince/Backend/Checkout/Dockerfile` |
+  | `elysium-prince-jobs-api` | `Prince/Backend/Jobs/Dockerfile` |
+  | `elysium-prince-core-web-vue` | `Prince/Frontend/prince-core-vue` |
+  | `elysium-prince-checkout-web-vue` | `Prince/Frontend/prince-checkout-vue` |
+  | `elysium-prince-core-web-react` | `Prince/Frontend/prince-core-react` |
+  | `elysium-prince-checkout-web-react` | `Prince/Frontend/prince-checkout-react` |
+  | `elysium-prince-reverse-proxy` | `Prince/reverse-proxy` |
+
+- **Tags:** `:main` moves with every merge; `:main-<short sha>` (7 characters of the merge commit) never moves, for rolling back and for pinning a test to one build.
+- **Provenance:** each image carries the OCI labels linking it to this repository (`org.opencontainers.image.source`, `.revision`) and a signed build-provenance attestation, checked with `gh attestation verify oci://ghcr.io/rodgallert/<image>:main -R rodgallert/Elysium`.
+- **Permissions:** only the `publish` job can write packages (`packages: write`, plus `id-token: write` and `attestations: write` for the attestation); it logs in to GHCR with the workflow's own `GITHUB_TOKEN`. Every other job is read-only, so no pull request or fork can publish.
+- **One-time step for each new image (PO):** the first publish of an image creates its package as private. In the package's settings on GitHub (profile, Packages, the package, Package settings): check that it is linked to `rodgallert/Elysium` (the `source` label links it; if not, "Connect repository"), and under "Danger Zone" change the visibility to **Public**. Until then, pulling it needs a login.
 
 ## Branches
 
@@ -122,7 +145,7 @@ A service is released when its milestone's tickets are on `main` and its phase c
    - its pinned image version in `docker-compose.prod.yml`.
 2. **Smoke test, security pass and performance pass** for that service, on the release PR's head: a clean `docker compose up` with every shipped **Done when** of the service once; the security checklist for what the release touches; response times and resource use against the roadmap's budgets. Anything found is fixed by a `fix/` ticket before the release PR merges. The release PR records the results, and it isn't approved without them.
 3. **The PO approves and merges** the release PR. That merge is the release.
-4. **CI does the rest** from that merge commit: creates the tag `<service>-v<x.y.z>`, builds and publishes `ghcr.io/rodgallert/elysium-<service>:<x.y.z>`, and creates a GitHub Release with the changelog section. Then close the service's milestone.
+4. **CI does the rest** from that merge commit: creates the tag `<service>-v<x.y.z>`, builds and publishes the service's images (`ghcr.io/rodgallert/elysium-<service>-<component>:<x.y.z>`), and creates a GitHub Release with the changelog section. Then close the service's milestone.
 
 Several services can be released in one PR when they must ship together (a coordinated breaking change); each still gets its own version, changelog section and tag.
 
