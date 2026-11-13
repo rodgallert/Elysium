@@ -220,3 +220,20 @@ The private parameterless EF constructors (`private Producer() { }`, etc.) are *
 ## 2026-08-17 — Plan scope: one concrete step at a time, not the whole vision upfront
 
 An early planning pass tried to lay out the entire multi-service/docker/database vision as one big plan before any code was written. Rejected in favor of building one small, concrete piece at a time (move the solution, then scaffold Checkout, then scaffold Jobs, ...), confirming architecture decisions at the point each piece is actually being built rather than pre-deciding everything up front. See the root `CLAUDE.md` for how this should shape future work in this repo.
+
+## 2026-09-30 — React added alongside Vue; Vue apps restructured onto `/vue`
+
+Added a path-based scheme for running a Vue and a React implementation of the same two pages side by side, as a portfolio demonstration of both frontend stacks. Implemented as:
+
+- **`prince-core` → `prince-core-vue`, `prince-checkout` → `prince-checkout-vue`**, moved off their original `/` and `/checkout` paths onto `/vue` and `/vue/checkout` respectively (Vite `base` updated to match on both). This was an explicit choice to fully restructure onto a symmetric scheme rather than the lower-disruption alternative of leaving the Vue paths as they were and only adding React at new paths.
+- **`prince-core-react`, `prince-checkout-react`** added at `/react` and `/react/checkout` — same multi-stage Dockerfile (`node:22-alpine` build → `nginx:1.27-alpine` static serve) and per-app `nginx.conf` (SPA `try_files` fallback) pattern the Vue apps already used, so all four frontends are structurally identical containers.
+- `reverse-proxy/nginx.conf` upstreams renamed with the framework suffix last (`core_web_vue`, `checkout_web_vue`, `core_web_react`, `checkout_web_react`), matching each container's compose service name (`core-web-vue`, etc.). Same prefix-stripping `proxy_pass http://upstream/;` pattern as the original `checkout_web` route.
+- **Postgres published on `127.0.0.1:5432` only**, so the database is reachable from this machine with a DB client but not from the network.
+- **`.dockerignore` in every frontend** so a local `node_modules` or build output never reaches the image build context.
+- The React apps are the Vite starter so far; their static assets use Vite's base path (`import.meta.env.BASE_URL`) so they resolve under `/react/...`.
+- **Healthchecks added to all four frontend containers** (`wget -q --spider http://127.0.0.1/`, alpine's nginx image ships busybox `wget` but not `curl`; `localhost` must not be used — busybox resolves it to `::1` first and the app's nginx only listens on IPv4, so the check fails with "connection refused") — previously only the three .NET APIs and Postgres had one. `reverse-proxy`'s `depends_on` for all four frontends upgraded from `condition: service_started` to `condition: service_healthy`, consistent with how it already gates on the APIs.
+
+- **Reverse proxy redirects keep the host port**: `absolute_redirect off;` (nginx's own `/vue` → `/vue/` redirect was built from `listen 80` and dropped `:8080`) and `proxy_set_header Host $http_host` instead of `$host` (Jobs' `/admin/login` redirect also lost the port).
+- **Postgres published on host port `5432`** so the database can be reached directly with a DB client.
+
+**Left open, not decided here:** nothing currently serves `/` — core-web moved to `/vue` and no replacement root route was added. Decide whether `/` should redirect to one of the four apps (and which) or stay unrouted, before this goes further.

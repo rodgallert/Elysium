@@ -5,6 +5,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - prince-pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -93,13 +95,41 @@ services:
       file-storage:
         condition: service_healthy
 
-  core-web:
+  core-web-vue:
     build:
-      context: ./Frontend/prince-core
+      context: ./Frontend/prince-core-vue
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  checkout-web:
+  checkout-web-vue:
     build:
-      context: ./Frontend/prince-checkout
+      context: ./Frontend/prince-checkout-vue
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  core-web-react:
+    build:
+      context: ./Frontend/prince-core-react
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  checkout-web-react:
+    build:
+      context: ./Frontend/prince-checkout-react
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   reverse-proxy:
     build:
@@ -113,10 +143,14 @@ services:
         condition: service_healthy
       jobs-api:
         condition: service_healthy
-      core-web:
-        condition: service_started
-      checkout-web:
-        condition: service_started
+      core-web-vue:
+        condition: service_healthy
+      checkout-web-vue:
+        condition: service_healthy
+      core-web-react:
+        condition: service_healthy
+      checkout-web-react:
+        condition: service_healthy
 
 volumes:
   prince-pgdata:

@@ -6,9 +6,9 @@ import Vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  // Served under /checkout behind the reverse proxy — must match so built asset
+  // Served under /vue/checkout behind the reverse proxy — must match so built asset
   // URLs and vue-router's history base (which reads this via BASE_URL) resolve correctly.
-  base: '/checkout/',
+  base: '/vue/checkout/',
   plugins: [
     Vue({
       template: { transformAssetUrls },
