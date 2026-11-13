@@ -32,19 +32,19 @@ The repo runs on the ticket workflow, and the work already done locally is lande
 - [x] File storage on Silo (`pgsty/silo`, pinned release) instead of MinIO, with the bucket created by its bundled client
 - [ ] Publish development images: every merge into `main` builds and pushes the changed services to `ghcr.io/rodgallert/elysium-<service>:main`
 - [ ] Release automation: `docker-compose.prod.yml` as the list of what's in production; merging a release PR tags `<service>-v<x.y.z>`, publishes the versioned image and creates the GitHub Release
-- [ ] Platform design document (`Docs/platform-design.md`)
+- [x] Platform design document (`Docs/platform-design.md`)
 - [x] README: what Elysium is now, and a "How this is built" section (AI-assisted development, with the architecture, reviews and decisions owned by the author)
 
 **Done when:** a clean clone, `docker compose up` in `Prince/`, and every route answers, file storage included; a ticket PR shows a green CI build, goes through review on the board, and its merge publishes development images.
 
 ## Phase 1: Masquerade (accounts) — detailed design
 
-- [ ] Data model: accounts, login methods, shared personal data with verification status, product activations, sessions
-- [ ] Endpoints and flows: OIDC endpoints, sign-up, sign-in per method, password reset, activation, session list, sign-out (one / everywhere / per product)
-- [ ] Sign-in and activation screens (hosted by Masquerade on `accounts.localhost`)
-- [ ] Revocation store layout and Keeper's check
+- [x] Data model: accounts, login methods, shared personal data with verification status, product activations, sessions
+- [x] Endpoints and flows: OIDC endpoints, sign-up, sign-in per method, password reset, activation, session list, sign-out (one / everywhere / per product)
+- [x] Sign-in and activation screens (hosted by Masquerade on `accounts.localhost`)
+- [x] Revocation store layout and Keeper's check
 - [ ] Moving to the agreed repository layout (`Docs/platform-design.md`, section 17): the root `docker-compose.yml`, hostnames (section 18), and which parts of Prince's code move to which service
-- [ ] Threat model for the first version, mapped to the OWASP requirements in the design
+- [x] Threat model for the first version, mapped to the OWASP requirements in the design
 - [ ] Design tokens and the Elysium palette (dark and light), the component spec, the token generator and its drift check
 - [ ] React Material 3 library evaluation (time-boxed)
 
