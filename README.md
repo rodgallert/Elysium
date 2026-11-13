@@ -20,7 +20,7 @@ It's not a business. It exists to show how I design, build and run a system like
 | **Herald** | Notifications (email first) | Planned |
 | **Haven** | File storage (S3-compatible, on Silo) | Planned |
 | **Vitae** · **Tithe** | Payments · recurring billing | Planned |
-| [**Prince**](Prince/) | Product: creators sell courses, downloads and content access | Running (APIs, Vue and React frontends) |
+| [**Prince**](Prince/) | Product: creators sell courses, downloads and content access | Running (APIs and Vue frontends; React frontends scaffolded) |
 
 ## Architecture at a glance
 
