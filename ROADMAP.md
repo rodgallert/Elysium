@@ -33,7 +33,7 @@ The repo runs on the ticket workflow, and the work already done locally is lande
 - [ ] Publish development images: every merge into `main` builds and pushes the changed services to `ghcr.io/rodgallert/elysium-<service>:main`
 - [ ] Release automation: `docker-compose.prod.yml` as the list of what's in production; merging a release PR tags `<service>-v<x.y.z>`, publishes the versioned image and creates the GitHub Release
 - [ ] Platform design document (`Docs/platform-design.md`)
-- [ ] README: what Elysium is now, and a "How this is built" section (AI-assisted development, with the architecture, reviews and decisions owned by the author)
+- [x] README: what Elysium is now, and a "How this is built" section (AI-assisted development, with the architecture, reviews and decisions owned by the author)
 
 **Done when:** a clean clone, `docker compose up` in `Prince/`, and every route answers, file storage included; a ticket PR shows a green CI build, goes through review on the board, and its merge publishes development images.
 
