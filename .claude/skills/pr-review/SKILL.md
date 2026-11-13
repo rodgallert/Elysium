@@ -24,8 +24,8 @@ Then work out the **review level** from the branches (`Docs/workflow.md`):
 | Head | Base | Level |
 |---|---|---|
 | `<type>/p<n>-<slug>` or `<type>/<slug>` | `main` | **Ticket** |
-| `chore/release-<service>-<x.y.z>` | `main` | **Release** (one service; several when they must ship together) |
-| `hotfix/<service>-<x.y.z>` | `release/<service>-<x.y>` | **Hotfix** (release-level checks for the fix; the same fix must already be on `main`) |
+| `chore/release-<part>-<x.y.z>` | `main` | **Release** (one release part; several when they must ship together) |
+| `hotfix/<part>-<x.y.z>` | `release/<part>-<x.y>` | **Hotfix** (release-level checks for the fix; the same fix must already be on `main`) |
 
 All merges are squash merges.
 
@@ -81,7 +81,7 @@ Each failure is a **Must fix** unless noted.
 - The change does what its roadmap task and linked issue say: same names, rules, limits and defaults.
 - If the code changes a documented rule, the document changes in the same PR.
 - **Decided values:** any security or business number added or changed (token lifetimes, password rules, rate limits, lockout timings, fee percentages, retention periods) is listed under **Needs the PO's confirmation**, quoting old and new. You can't know whether it was approved, so don't call it a defect; just make it impossible to miss. The PR description must call out every such change, since squash merging folds it into one commit with everything else (Should fix if it doesn't).
-- **Phase level:** every task in the phase is ticked, and the phase's **Done when** is met. **Release level:** every ticket of the service's milestone is in; the version in the project file, the new `CHANGELOG.md` section and the image pin in `docker-compose.prod.yml` all agree; the changelog has a "Breaking changes" heading that lists every breaking change since the service's last release with what can break and what to do (check the milestone for `BREAKING CHANGE:` commits and issues with a breaking-change note; a missing one is a **Must fix**); the smoke, security and performance results are in the PR; a breaking change bumps the major version (minor below 1.0).
+- **Phase level:** every task in the phase is ticked, and the phase's **Done when** is met. **Release level:** every ticket of the part's milestone is in; the version in the part's version file, the new `CHANGELOG.md` section and the image pins in `docker-compose.prod.yml` (written by the prepare run, after the last change to the service folder) all agree; the changelog has a "Breaking changes" heading that lists every breaking change since the part's last release with what can break and what to do (check the milestone for `BREAKING CHANGE:` commits and issues with a breaking-change note; a missing one is a **Must fix**); the smoke, security and performance results are in the PR; a breaking change bumps the major version (minor below 1.0).
 
 ## 5. Code review
 

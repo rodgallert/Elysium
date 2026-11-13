@@ -102,6 +102,13 @@ expect fail "a release commit without a version change fails" "$T/release-plan.s
 props 0.4 "$repo/Fake/api/Directory.Build.props"; commit "chore(release): fake-api 0.4"
 expect fail "a version that isn't x.y.z fails" "$T/release-plan.sh" merged HEAD
 props 0.4.0 "$repo/Fake/api/Directory.Build.props"; commit "chore(release): fake-api 0.4.0"
+props 0.5.0 "$repo/Fake/api/Directory.Build.props"; commit "chore(release)!: fake-api 0.5.0"
+jqok "a breaking release title (chore(release)!:) is a release commit too" "$T/release-plan.sh merged HEAD" '.parts[0].version == "0.5.0"'
+jqok "a pull request's version change with a release title is a release" "$T/release-plan.sh changed HEAD~2 HEAD 'chore(release): fake-api 0.5.0'" '(.parts | map(.part)) == ["fake-api"]'
+expect fail "a pull request's version change under another title fails" "$T/release-plan.sh" changed HEAD~2 HEAD "fix(fake): typo"
+expect fail "a pull request with a release title and no version change fails" "$T/release-plan.sh" changed HEAD HEAD "chore(release): fake-api 0.5.0"
+jqok "a pull request with neither releases nothing" "$T/release-plan.sh changed HEAD HEAD 'fix(fake): typo'" '.parts == []'
+props 0.4.0 "$repo/Fake/api/Directory.Build.props"; commit "chore(release): fake-api 0.4.0 again, for the cases below"
 jqok "a manual run takes the part's version, or the one given" "$T/release-plan.sh part fake-api 9.9.9" '.parts[0].version == "9.9.9"'
 expect fail "a manual run for an unknown part fails" "$T/release-plan.sh" part nothing 1.0.0
 mkdir -p "$repo/Other/app"; echo 'FROM scratch' >"$repo/Other/app/Dockerfile"; printf 'services:\n  app:\n    build: ./app\n' >"$repo/Other/docker-compose.yml"

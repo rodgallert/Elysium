@@ -5,8 +5,12 @@
 #
 #   release-plan.sh merged <commit>           the parts whose version the commit changed (a squash merge into
 #                                             main or a release branch; the checkout must be at that commit).
-#                                             A version change is only allowed in a "chore(release): ..." commit,
-#                                             and a release commit must change a version; anything else fails.
+#                                             A version change is only allowed in a release commit
+#                                             ("chore(release): ..." or "chore(release)!: ..."), and a release
+#                                             commit must change a version; anything else fails.
+#   release-plan.sh changed <base> <head> <subject>
+#                                             the same between two commits, with <subject> as the commit's
+#                                             subject (a pull request: its merge ref, base and title)
 #   release-plan.sh part <name> [<version>]   one part, at <version> or its current version (manual runs)
 #   release-plan.sh all                       every part at its version (dry runs of the tooling)
 # With --drafts (before the subcommand), a service with images but no version file yet counts as one part named
@@ -31,23 +35,33 @@ if [ "${1:-}" = "--drafts" ]; then
 fi
 
 case "${1:-}" in
-    merged)
-        commit="${2:?usage: release-plan.sh merged <commit>}"
-        subject="$(git log -1 --format=%s "$commit")"
+    merged | changed)
+        if [ "$1" = merged ]; then
+            head="${2:?usage: release-plan.sh merged <commit>}"
+            base="$head^"
+            subject="$(git log -1 --format=%s "$head")"
+        else
+            base="${2:?usage: release-plan.sh changed <base> <head> <subject>}"
+            head="${3:?usage: release-plan.sh changed <base> <head> <subject>}"
+            subject="${4?usage: release-plan.sh changed <base> <head> <subject>}"
+        fi
+        release_commit=false
+        release_title='^chore\(release\)!?: '
+        if [[ "$subject" =~ $release_title ]]; then release_commit=true; fi
         chosen='[]'
         while IFS=$'\t' read -r part file; do
             [ -n "$part" ] || continue
-            old="$(tools/release-parts.sh version "$file" "$commit^")"
-            new="$(tools/release-parts.sh version "$file" "$commit")"
+            old="$(tools/release-parts.sh version "$file" "$base")"
+            new="$(tools/release-parts.sh version "$file" "$head")"
             [ "$old" != "$new" ] || continue
             chosen="$(jq -c --arg p "$part" --arg v "$new" --argjson parts "$parts" \
                 '. + [$parts[] | select(.part == $p) | .version = $v]' <<<"$chosen")"
         done < <(jq -r '.[] | [.part, .versionFile] | @tsv' <<<"$parts")
         released="$(jq -r 'map(.part) | join(", ")' <<<"$chosen")"
-        if [ -n "$released" ] && [[ "$subject" != "chore(release): "* ]]; then
+        if [ -n "$released" ] && ! $release_commit; then
             fail "'$subject' changes the version of $released but is not a release commit (chore(release): ...)"
         fi
-        if [ -z "$released" ] && [[ "$subject" == "chore(release): "* ]]; then
+        if [ -z "$released" ] && $release_commit; then
             fail "'$subject' is a release commit but changes no release part's version"
         fi
         ;;
@@ -62,7 +76,7 @@ case "${1:-}" in
         chosen="$(jq -c 'map(if .version == "" then .version = "0.0.0" else . end)' <<<"$parts")"
         ;;
     *)
-        fail "usage: release-plan.sh merged <commit> | part <name> [<version>] | all"
+        fail "usage: release-plan.sh merged <commit> | changed <base> <head> <subject> | part <name> [<version>] | all"
         ;;
 esac
 

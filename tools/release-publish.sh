@@ -3,9 +3,10 @@
 # The images were built, pushed by digest and attested by the prepare run, and the release PR pinned those
 # digests in docker-compose.prod.yml. This only:
 #   1. checks every pinned digest of the part carries SBOM and provenance attestations signed by the release
-#      workflow of this repository (so a digest written by hand can't be released);
-#   2. checks the part's service folder at HEAD is identical to the commit the images were built from (their
-#      org.opencontainers.image.revision label), so nothing changed between the prepare run and the merge;
+#      workflow of this repository on a GitHub-hosted runner (so a digest written by hand can't be released);
+#   2. checks the commit the images were built from, as the provenance certificate names it, has the same service
+#      folder and release tooling as HEAD, so the images come from the reviewed, merged code
+#      (tools/release-check-source.sh);
 #   3. tags every image <version> (same digest, no rebuild), creates the annotated git tag <part>-v<version> on
 #      HEAD and the GitHub Release with the part's changelog section and the attested SBOMs.
 # Re-running is safe: steps already done are skipped, and something tagged differently fails. A version that is
@@ -24,7 +25,6 @@ repository="${GITHUB_REPOSITORY:?}"
 owner="${repository%%/*}"
 registry="${RELEASE_REGISTRY:-ghcr.io}"
 tag="$part-v$version"
-signer="$repository/.github/workflows/release.yml"
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 
@@ -34,7 +34,6 @@ remote_digest() { docker buildx imagetools inspect "$1" --format '{{json .Manife
 info="$(tools/release-parts.sh | jq -c --arg p "$part" '.[] | select(.part == $p)')"
 [ -n "$info" ] || fail "no such release part"
 [ "$(jq -r .version <<<"$info")" = "$version" ] || fail "the part's version file says $(jq -r .version <<<"$info")"
-folder="$(jq -r .folder <<<"$info")"
 changelog="$(jq -r .changelog <<<"$info")"
 
 # The pinned digest of every image of the part
@@ -56,29 +55,8 @@ if $released && git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/n
     exit 0
 fi
 
-# 1. Attestations, and the commit the images were built from
-built_from=""
-for image in "${!digests[@]}"; do
-    ref="oci://$registry/$owner/$image@${digests[$image]}"
-    gh attestation verify "$ref" -R "$repository" --signer-workflow "$signer" >/dev/null ||
-        fail "$image: no build provenance signed by $signer"
-    gh attestation verify "$ref" -R "$repository" --signer-workflow "$signer" \
-        --predicate-type https://spdx.dev/Document/v2.3 --format json |
-        jq '.[0].verificationResult.statement.predicate' >"$out/$image.spdx.json" ||
-        fail "$image: no SBOM attestation signed by $signer"
-    revision="$(docker buildx imagetools inspect "$registry/$owner/$image@${digests[$image]}" --format '{{json .Image}}' |
-        jq -r '.config.Labels["org.opencontainers.image.revision"] // empty')"
-    [ -n "$revision" ] || fail "$image: no revision label"
-    [ -z "$built_from" ] || [ "$built_from" = "$revision" ] || fail "the images were built from different commits"
-    built_from="$revision"
-done
-
-# 2. Nothing in the service changed between the prepare run and the merge
-git cat-file -e "$built_from^{commit}" 2>/dev/null || git fetch -q --no-tags origin "$built_from" ||
-    fail "can't fetch $built_from, the commit the images were built from"
-if [ "$(git rev-parse "$built_from:$folder")" != "$(git rev-parse "HEAD:$folder")" ]; then
-    fail "$folder changed between the prepare run ($built_from) and the merge; release a new version"
-fi
+# 1 and 2. Attestations, and the images built from the merged code (tools/release-check-source.sh)
+tools/release-check-source.sh --attested "$out" "$part" "$version" >/dev/null
 
 # 3. Image tags, git tag, GitHub Release
 for image in "${!digests[@]}"; do

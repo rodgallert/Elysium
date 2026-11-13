@@ -55,8 +55,9 @@ runs:
           org.opencontainers.image.title=${{ inputs.image }}
           org.opencontainers.image.version=${{ inputs.version }}
 
-    # Pushed by digest only, or exported as an OCI archive in a dry run. BuildKit's own unsigned SBOM and
-    # provenance stay off; the signed attestations below replace them, as in the publish job.
+    # Always exported as an OCI archive, for the SBOM; in a prepare run also pushed by digest only (the same
+    # manifest). BuildKit's own unsigned SBOM and provenance stay off; the signed attestations below replace them,
+    # as in the publish job.
     - id: build
       uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
       with:
@@ -65,24 +66,26 @@ runs:
         provenance: false
         sbom: false
         labels: ${{ steps.meta.outputs.labels }}
-        outputs: >-
-          ${{ inputs.push == 'true'
-              && format('type=image,name=ghcr.io/{0}/{1},push-by-digest=true,name-canonical=true,push=true', github.repository_owner, inputs.image)
-              || format('type=oci,dest={0}/{1}.tar', runner.temp, inputs.image) }}
+        outputs: |
+          type=oci,dest=${{ runner.temp }}/${{ inputs.image }}.tar
+          ${{ inputs.push == 'true' && format('type=image,name=ghcr.io/{0}/{1},push-by-digest=true,name-canonical=true,push=true', github.repository_owner, inputs.image) || '' }}
         cache-from: type=gha,scope=${{ inputs.image }}
 
+    # From the local archive, so syft never sees a registry credential; the archive must hold the pushed manifest
     - name: SBOM (syft, SPDX JSON)
       shell: bash
       env:
-        SOURCE: >-
-          ${{ inputs.push == 'true'
-              && format('registry:ghcr.io/{0}/{1}@{2}', github.repository_owner, inputs.image, steps.build.outputs.digest)
-              || format('oci-archive:/work/{0}.tar', inputs.image) }}
         IMAGE: ${{ inputs.image }}
+        DIGEST: ${{ steps.build.outputs.digest }}
       run: |
-        docker run --rm -v "$RUNNER_TEMP:/work" -v "$HOME/.docker:/docker:ro" -e DOCKER_CONFIG=/docker \
+        archived="$(tar -xOf "$RUNNER_TEMP/$IMAGE.tar" index.json | jq -r '.manifests[0].digest')"
+        if [ "$archived" != "$DIGEST" ]; then
+          echo "::error::the archive holds $archived, but the build's digest is $DIGEST"
+          exit 1
+        fi
+        docker run --rm -v "$RUNNER_TEMP:/work" \
           anchore/syft:v1.55.0@sha256:4cc92b64ca74ffca4c94d4c8fcc01f217731375300be14d0b6eeb2e82eaa110a \
-          scan "$SOURCE" -o "spdx-json=/work/$IMAGE.spdx.json"
+          scan "oci-archive:/work/$IMAGE.tar" -o "spdx-json=/work/$IMAGE.spdx.json"
         jq -r '"SBOM: \(.packages | length) packages"' "$RUNNER_TEMP/$IMAGE.spdx.json"
 
     - if: inputs.sign == 'true'

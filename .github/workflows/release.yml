@@ -96,6 +96,7 @@ jobs:
 
   # Dry run on a pull request: build, SBOM, notes and pin, no signing (a pull request gets no OIDC token here)
   dry-run-pr:
+    name: dry-run-pr (${{ matrix.image.image }})
     needs: plan
     if: needs.plan.outputs.mode == 'dry-run-pr' && needs.plan.outputs.images != '[]'
     runs-on: ubuntu-latest
@@ -120,6 +121,7 @@ jobs:
 
   # Manual dry run: also signs the SBOM and provenance, for a digest that is never pushed
   dry-run:
+    name: dry-run (${{ matrix.image.image }})
     needs: plan
     if: needs.plan.outputs.mode == 'dry-run'
     runs-on: ubuntu-latest
@@ -225,6 +227,7 @@ jobs:
 
   # Prepare a release PR: push every image of the part by digest, with SBOM and provenance attestations
   prepare:
+    name: prepare (${{ matrix.image.image }})
     needs: plan
     if: needs.plan.outputs.mode == 'prepare'
     runs-on: ubuntu-latest

@@ -59,7 +59,8 @@ jobs:
 
   # docker-compose.prod.yml, the list of what's in production (tools/check-prod-pins.sh), and the release scripts'
   # fixture tests. A pull request that adds or changes a third-party pin must pin its tag's current digest; a
-  # release PR (title "chore(release): ...", or the build the prepare run starts) must have every digest pullable.
+  # release PR (one that changes a part's version, or the build the prepare run starts) must have every digest
+  # pullable.
   release-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -70,15 +71,29 @@ jobs:
           persist-credentials: false
       - name: Release scripts' fixture tests
         run: tools/tests/release-tools.sh
-      - name: Check the production pins
+      # On a pull request the checkout is its merge ref, so HEAD^1 is the base and HEAD what the merge will be.
+      # A PR that changes a part's version is a release PR, whatever its title, and gets the release checks:
+      # the title must agree (chore(release): or chore(release)!:), and the pinned images must have been built
+      # from the same service folder and release tooling as HEAD (the release job repeats both after the merge).
+      - name: Check the production pins and release PRs
         env:
-          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
-          RELEASE: ${{ inputs.release || (github.event_name == 'pull_request' && startsWith(github.event.pull_request.title, 'chore(release):')) }}
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          TITLE: ${{ github.event.pull_request.title }}
+          RELEASE_INPUT: ${{ inputs.release }}
         run: |
           args=()
-          [ -z "$BASE" ] || args+=(--base "$BASE")
-          [ "$RELEASE" != true ] || args+=(--release)
+          parts='[]'
+          if [ "$EVENT" = pull_request ]; then
+            args+=(--base "origin/$BASE_REF")
+            parts="$(tools/release-plan.sh changed HEAD^1 HEAD "$TITLE" | jq -c .parts)"
+          fi
+          if [ "$parts" != '[]' ] || [ "$RELEASE_INPUT" = true ]; then args+=(--release); fi
           tools/check-prod-pins.sh "${args[@]}"
+          while IFS=$'\t' read -r part version; do
+            echo "Release PR: $part $version"
+            tools/release-check-source.sh "$part" "$version"
+          done < <(jq -r '.[] | [.part, .version] | @tsv' <<<"$parts")
 
   # Every folder with a package.json under */Frontend/ is a frontend; found at run time, so adding an app needs no workflow change
   find-frontends:
@@ -136,6 +151,7 @@ jobs:
   # and only after the boundary check, every build and every test passed, because :main is what development runs.
   # The only job allowed to write packages; everything else stays read-only.
   publish:
+    name: publish (${{ matrix.image.image }})
     needs: [boundaries, dotnet, frontends, find-images]
     if: >-
       !cancelled() && !failure()
