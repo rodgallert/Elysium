@@ -1,4 +1,5 @@
 # Builds and tests every .NET solution and every frontend in the repository, and checks the service boundaries.
+# On a push to main, once all of that passes, it also publishes the development images (see the publish job).
 name: Build
 
 # One build per change: pushes build only main and release branches, every other branch builds through its pull request.
@@ -14,7 +15,9 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same PR cancels the older run; runs on main and release branches always finish
+# A newer push to the same PR cancels the older run; runs on main and release branches always finish.
+# On main this also keeps publishes in merge order: one run at a time, and a newer merge replaces a queued one,
+# so :main never moves back to an older commit.
 concurrency:
   group: build-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -85,3 +88,78 @@ jobs:
       - name: Lint (when the app has a lint script)
         run: |
           if jq -e '.scripts.lint' package.json >/dev/null; then npm run lint; else echo "No lint script"; fi
+
+  # The images to publish, read from each service's docker-compose.yml (tools/list-images.sh). Runs on pull requests
+  # too, so a Dockerfile that no Compose service builds fails the PR instead of silently never being published.
+  find-images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      images: ${{ steps.find.outputs.images }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - id: find
+        run: echo "images=$(tools/list-images.sh)" >> "$GITHUB_OUTPUT"
+
+  # Publishes every image as the development version: ghcr.io/<owner>/elysium-<service>-<component>:main and
+  # :main-<short sha>, with build provenance. Only on a push to main (never on pull requests, forks or manual runs),
+  # and only after the boundary check, every build and every test passed, because :main is what development runs.
+  # The only job allowed to write packages; everything else stays read-only.
+  publish:
+    needs: [boundaries, dotnet, frontends, find-images]
+    if: >-
+      !cancelled() && !failure()
+      && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && needs.find-images.outputs.images != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # signs the provenance attestation
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.find-images.outputs.images) }}
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image.image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Tags and the OCI labels; org.opencontainers.image.source links the package to this repository
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=main
+            type=sha,prefix=main-,format=short
+          labels: |
+            org.opencontainers.image.title=${{ matrix.image.image }}
+      # provenance: false leaves out BuildKit's unsigned attestation; the signed one comes from the next step
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.file }}
+          push: true
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.image }}
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

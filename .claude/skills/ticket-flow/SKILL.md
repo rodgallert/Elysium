@@ -58,7 +58,7 @@ A phase has no branch. `tools/board.sh <epic> "In progress"`, and move the phase
 2. Work the release ticket like any ticket (`start`), on `chore/release-<service>-<x.y.z>`: bump the service's version in its project file; in its `CHANGELOG.md` move the "Unreleased" entries under the new version with a "Breaking changes" heading (every breaking change since its last release, with what can break and what to do, or "None") and a "Known issues" line; update its image pin in `docker-compose.prod.yml`. Search the milestone for `BREAKING CHANGE:` commits and issues with a breaking-change note.
 3. Run the service's smoke test, security pass and performance pass on the release PR's head (`Docs/workflow.md`, release step 2) and record the results in the PR. Fixes are separate `fix/` tickets merged first.
 4. Open the PR (title `chore(release): <service> <x.y.z>`), get it reviewed at release level, and ask the PO to approve and merge it (**squash**, like every PR).
-5. After the merge, check that CI created the tag `<service>-v<x.y.z>`, published `ghcr.io/rodgallert/elysium-<service>:<x.y.z>` and created the GitHub Release. If it didn't, tell the PO what failed; never create the tag by hand.
+5. After the merge, check that CI created the tag `<service>-v<x.y.z>`, published the service's images (`ghcr.io/rodgallert/elysium-<service>-<component>:<x.y.z>`) and created the GitHub Release. If it didn't, tell the PO what failed; never create the tag by hand.
 6. Close the milestone (`gh api -X PATCH repos/rodgallert/Elysium/milestones/<number> -f state=closed`).
 
 ### `hotfix <ticket>`: fix a released version
