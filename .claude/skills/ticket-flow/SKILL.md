@@ -71,5 +71,5 @@ A release part is a service, or one of the parts it declares (`Docs/workflow.md`
 ## Rules
 - **Pushing:** the flow's steps push without asking: creating ticket and hotfix branches, pushing phase tags, and pushing a working branch's commits while its PR is open. Never force-push, never push commits to `main` or a release branch, never create release tags (CI does) or release branches (the PO does), and never merge: the PO merges.
 - The board follows the work, never the other way round: move an issue when its step actually happens, not ahead of time.
-- New work found along the way (a bug, a "Later" item from a review) gets its own issue in **Backlog** with the right labels and milestone. Never widen a ticket silently.
+- New work found along the way (a bug, a "Later" item from a review) gets its own issue in **Backlog** with the right labels and milestone (one issue per release part when it changes several: `Docs/workflow.md`, "Issues, epics and milestones"). Never widen a ticket silently.
 - If `tools/board.sh` fails (no `project` scope, board missing), still do the issue steps and tell the PO what failed.
