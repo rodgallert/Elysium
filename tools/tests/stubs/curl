@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Test stub for tools/tests/release-tools.sh: answers every request with the HTTP status in STUB_HTTP
-# (000 means no answer, like a network error).
+# (000 means no answer, like a network error). Refuses to run outside the tests.
+[ "${RELEASE_TOOLS_TEST:-}" = 1 ] || { echo "tools/tests/stubs/curl is a test stub" >&2; exit 99; }
 if [ "$STUB_HTTP" = 000 ]; then
     printf 000
     exit 7

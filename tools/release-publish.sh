@@ -45,12 +45,16 @@ while IFS= read -r image; do
     digests[$image]="${line##*@}"
 done < <(jq -r '.images[].image' <<<"$info")
 
-# Already released (every image tag, the git tag and the Release exist and agree): nothing to do
+# Already released (every image tag, the git tag and the Release exist and agree, a hotfix copied back to main):
+# nothing to do, once tools/release-state.sh proves those come from a real release; a forged or partial state
+# fails there instead of skipping the checks below
 released=true
 for image in "${!digests[@]}"; do
     [ "$(remote_digest "$registry/$owner/$image:$version")" = "${digests[$image]}" ] || released=false
 done
 if $released && git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null && gh release view "$tag" -R "$repository" >/dev/null 2>&1; then
+    state="$(tools/release-state.sh "$part" "$version")" || fail "looks released, but the release can't be proven"
+    [ "$state" = released ] || fail "looks released, but tools/release-state.sh says $state"
     echo "$tag is already released; nothing to do"
     exit 0
 fi

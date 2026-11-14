@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fixture tests for the release scripts (tools/release-*.sh, tools/check-prod-pins.sh). Offline: no registry.
-# Run from anywhere: tools/tests/release-tools.sh
+# Run from anywhere: tools/tests/release-tools.sh (VERBOSE=1 also shows each case's output)
 set -uo pipefail
 
 tools="$(cd "$(dirname "$0")/.." && pwd)"
@@ -25,6 +25,9 @@ expect() {
     if out="$("$@" 2>&1)"; then got=ok; else got=fail; fi
     if [ "$got" = "$want" ]; then
         echo "ok    $what"
+        # VERBOSE=1 shows why each case passed or failed
+        # shellcheck disable=SC2001 # indents every line of the output
+        [ -z "${VERBOSE:-}" ] || sed "s/^/      /" <<<"$out"
     else
         echo "FAIL  $what (wanted $want, got $got)"
         # shellcheck disable=SC2001 # indents every line of the output
@@ -211,15 +214,18 @@ check fail "a registry that isn't allowed fails" "image: quay.io/team/thing:1.2.
 printf 'services: {}\n' >"$repo/docker-compose.prod.yml"
 expect ok   "an empty production list passes" "$T/check-prod-pins.sh" --offline
 
-echo "== release-state.sh (stubbed git remote, Releases API and registry)"
-# The fixture's own bare remote holds the tags; curl and `docker buildx imagetools` are the stubs in
-# tools/tests/stubs, answering from STUB_HTTP and STUB_REGISTRY
+echo "== release-state.sh (stubbed Releases API, registry and attestations; the fixture's own git remote)"
+# The fixture's own bare remote holds main, the release branches and the tags. curl, gh and
+# `docker buildx imagetools` are the stubs in tools/tests/stubs, answering from STUB_HTTP (the Releases API),
+# STUB_REGISTRY (an image tag's digest), STUB_REVISION (the images' revision label) and STUB_ATTESTED (the commit
+# the attestations were made for)
 git init -q --bare "$work/origin.git"
 git remote add origin "$work/origin.git"
+git push -q origin main
 stubs="$tools/tests/stubs"
-export REAL_DOCKER
+export REAL_DOCKER RELEASE_TOOLS_TEST=1
 REAL_DOCKER="$(command -v docker)"
-# state <ok|fail> <description> [<expected output>]; STUB_HTTP and STUB_REGISTRY come from the caller
+# state <ok|fail> <description> [<expected output>]; the STUB_* values come from the caller
 state() {
     local cmd=(env PATH="$stubs:$PATH" GITHUB_REPOSITORY=rodgallert/Elysium "$T/release-state.sh" fake-api 0.4.0)
     if [ -n "${3:-}" ]; then
@@ -229,19 +235,57 @@ state() {
         expect "$1" "$2" "${cmd[@]}"
     fi
 }
+expect fail "a stub refuses to run outside the tests" env -u RELEASE_TOOLS_TEST "$stubs/curl"
+expect fail "the docker stub refuses an empty REAL_DOCKER" env REAL_DOCKER= "$stubs/docker" compose version
+mkdir -p "$repo/.github/workflows" "$repo/.github/actions/release-image"
+echo "name: Release" >"$repo/.github/workflows/release.yml"
+echo "name: Release image" >"$repo/.github/actions/release-image/action.yml"
 printf 'services:\n  api:\n    image: ghcr.io/rodgallert/elysium-fake-api:0.4.0@%s\n' "$d1" >"$repo/docker-compose.prod.yml"
+commit "chore(release): pin fake-api 0.4.0"
+git push -q origin main
+built="$(git rev-parse HEAD)"
+
+export STUB_REVISION="$built" STUB_ATTESTED="$built"
 STUB_HTTP=404 STUB_REGISTRY=missing state ok "nothing released yet: unreleased (the source check runs)" unreleased
 STUB_HTTP=500 STUB_REGISTRY=missing state fail "a Releases API error fails, never read as unreleased"
 STUB_HTTP=000 STUB_REGISTRY=missing state fail "no answer from the Releases API fails"
 STUB_HTTP=404 STUB_REGISTRY=error state fail "a registry error fails, never read as not tagged"
-git tag fake-api-v0.4.0
+
+# The release: the tag on the commit the images were built from, on main
+git tag -a fake-api-v0.4.0 -m "fake-api 0.4.0" "$built"
 git push -q origin fake-api-v0.4.0
-STUB_HTTP=200 STUB_REGISTRY="$d1" state ok "a hotfix copy-back of a released version: released (the source check is skipped)" released
-STUB_HTTP=200 STUB_REGISTRY="$d2" state fail "released, but the pin isn't the released digest: fails"
-STUB_HTTP=404 STUB_REGISTRY="$d1" state fail "a tag without a Release (partly released) fails"
-STUB_HTTP=200 STUB_REGISTRY=error state fail "a registry error on a released version fails"
+export STUB_HTTP=200 STUB_REGISTRY="$d1"
+state ok "a hotfix copy-back of a real release: released (the source check is skipped)" released
+STUB_REGISTRY="$d2" state fail "released, but the pin isn't the released digest: fails"
+STUB_HTTP=404 state fail "a tag without a Release (partly released) fails"
+STUB_REGISTRY=error state fail "a registry error on a released version fails"
+STUB_ATTESTED="" state fail "a tag, Release and image tag with no attested images (forged) fail"
+STUB_ATTESTED="$(printf 'b%.0s' {1..40})" state fail "images attested for another commit fail"
+STUB_REVISION="not-a-commit" STUB_ATTESTED="not-a-commit" state fail "a revision label that isn't a commit id fails"
+
+# Images built from a commit whose release tooling differs from the tagged one
+git checkout -q -b tooling-change
+echo "changed" >"$repo/tools/fixture-change"
+commit "ci: change the release tooling"
+changed="$(git rev-parse HEAD)"
+git checkout -q main
+STUB_REVISION="$changed" STUB_ATTESTED="$changed" state fail "images built with other release tooling than the tagged commit's fail"
+
+# A tag moved onto a commit that is only on an unprotected branch (same service and tooling trees)
+git checkout -q -b unprotected
+echo "elsewhere" >"$repo/OTHER.md"
+commit "docs: elsewhere"
+elsewhere="$(git rev-parse HEAD)"
+git checkout -q main
+git push -q origin unprotected
+git tag -f -a fake-api-v0.4.0 -m "fake-api 0.4.0" "$elsewhere" >/dev/null
+git push -q -f origin fake-api-v0.4.0
+STUB_REVISION="$elsewhere" STUB_ATTESTED="$elsewhere" state fail "a tag on a commit that isn't on main or a release branch fails"
+git push -q origin "$elsewhere:refs/heads/release/fake-api-0.4"
+STUB_REVISION="$elsewhere" STUB_ATTESTED="$elsewhere" state ok "the same tag once its commit is on a release branch: released" released
+
 git remote set-url origin "$work/nowhere.git"
-STUB_HTTP=200 STUB_REGISTRY="$d1" state fail "a git remote that can't be read fails"
+state fail "a git remote that can't be read fails"
 
 echo
 if [ "$failures" -gt 0 ]; then

@@ -64,6 +64,10 @@ jobs:
   release-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # attestations: read lets tools/release-state.sh verify a released version's attestations
+    permissions:
+      contents: read
+      attestations: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
