@@ -45,19 +45,21 @@ cp .env.example .env
 docker compose up --build
 ```
 
-That's it — Postgres and Silo come up, database migrations run automatically, and every service starts in the right order. Once everything's healthy:
+That's it — Postgres and Silo come up, database migrations run automatically, and every service starts in the right order. Once everything's healthy, these answer on this machine only (every published port is bound to `127.0.0.1`, so nothing is reachable from the network):
 
 | What | URL |
 |---|---|
 | Core site (Vue / React) | http://localhost:8080/vue/ · http://localhost:8080/react/ |
 | Checkout (Vue / React) | http://localhost:8080/vue/checkout/ · http://localhost:8080/react/checkout/ |
-| Database (Postgres) | `localhost:5432`, this machine only (credentials in `.env`) |
+| Database (Postgres) | `localhost:5432` (credentials in `.env`) |
 | Core API | http://localhost:8080/api/ |
 | Checkout API | http://localhost:8080/api/checkout/ |
 | Jobs dashboard | http://localhost:8080/jobs/ (login required — see `.env`) |
-| File storage console | http://localhost:9001/ |
+| File storage console | http://localhost:9001/ (credentials in `.env`; the S3 API isn't published, the services reach it inside Compose) |
 
 `.env.example` documents every configurable value (database credentials, Jobs admin login, file-storage credentials) with safe local-dev defaults — review it before deploying this anywhere beyond your own machine.
+
+Until 2026-11-14 the proxy (`8080`) and Silo (`9000`, `9001`) were published on every network interface, and Docker's published ports bypass the host firewall. If you ran the stack before then with the example passwords in your `.env`, change them (`POSTGRES_PASSWORD`, `JOBS_ADMIN_PASSWORD`, `FILE_STORAGE_ROOT_PASSWORD`) and recreate the volumes (`docker compose down -v`), since Postgres and Silo keep the credentials they were first started with.
 
 ## Project status
 

@@ -245,3 +245,14 @@ MinIO's `minio/minio` and `minio/mc` images stopped being published (Docker Hub 
 - Pinned to a release tag (`RELEASE.2026-11-12T00-00-00Z`), never `latest`, so a vanished or changed tag can't break the stack silently again.
 - Silo is maintained by a single company (Pigsty) and licensed AGPL-3.0; running it unmodified as a separate container carries no obligation for our code. Because the app will talk to it only through standard S3 APIs, switching to another S3-compatible store later is a configuration change. Product owner's decision: the AGPL licence makes no difference for us, because Elysium isn't distributed and Silo runs unmodified as its own container.
 - Verified: the server starts, the health endpoint answers 200, and `mcli` creates the `product-files` bucket.
+
+## 2026-11-14 — Every published port bound to loopback
+
+The reverse proxy (`${REVERSE_PROXY_PORT}:80`) and Silo (`9000`, `9001`) were published on every host interface, so they were reachable from the LAN, and Docker's published ports bypass firewalld's default zone. Postgres was already on `127.0.0.1` for the same reason. Now:
+
+- **Reverse proxy:** `127.0.0.1:${REVERSE_PROXY_PORT}:80`. Same URL on this machine; nothing from other devices.
+- **Silo S3 API (`9000`): no longer published.** Nothing on the host uses it; the services and `file-storage-init` reach it as `file-storage:9000` on the Compose network.
+- **Silo console (`9001`): kept, on `127.0.0.1` only.** It's how the stack's file storage is checked by hand (Phase 0's "every route answers, file storage included"), and keeping it on loopback changes nothing for that check.
+- Anyone who ran the stack with the example passwords while the ports were open should change them and recreate the volumes; the README and `.env.example` say so.
+
+Not breaking: no service or client depends on the host ports (the services use the Compose network), every documented URL still works on this machine, and no configuration key changed. What stops working is reaching the stack from another device, which was never a supported use. Other compose changes (restart policies, resolver, healthchecks) wait for the Environments sprint.
