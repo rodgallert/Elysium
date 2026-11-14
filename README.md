@@ -28,7 +28,7 @@ It's not a business. It exists to show how I design, build and run a system like
 - **One account, many products.** A person signs up once; each product is *activated* on that account, reuses what it already knows, and sees only the data it was granted.
 - **OpenID Connect** on ASP.NET Core Identity + OpenIddict, targeting **OWASP ASVS 5.0 Level 2**, with tokens revocable on the very next request.
 - **CQRS and messaging** with RabbitMQ and Wolverine; language-neutral message contracts, so a future service can use another framework.
-- **Trunk-based development with per-service releases**: every merge publishes development images, and one file lists what's in production (being set up).
+- **Trunk-based development with per-release-part releases**: every merge publishes development images, and one file lists what's in production (being set up).
 
 The full design, with the reasoning behind each decision:
 

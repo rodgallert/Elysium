@@ -35,8 +35,9 @@ of the new work is the product's own domain and frontend.
   reachable only through Keeper.
 - Message contracts are **language-neutral** (JSON with a documented schema), so services in other
   frameworks can publish and consume them.
-- **Per-service releases** on a trunk-based workflow: every merge into `main` publishes development
-  images; `docker-compose.prod.yml` lists the released version of every service (`Docs/workflow.md`).
+- **Per-release-part releases** on a trunk-based workflow (a release part is a service, or one of the
+  parts it declares): every merge into `main` publishes development images; `docker-compose.prod.yml`
+  lists the released version of every part (`Docs/workflow.md`).
 - The repository is a **public portfolio**, open about being AI-assisted: the README's "How this is built"
   describes the process; design outcomes and decision logs are public, while review transcripts and
   agent profiles stay private.

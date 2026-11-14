@@ -1,6 +1,6 @@
 # Branching, release and review workflow
 
-Elysium uses **trunk-based development with per-service releases**. `main` holds everything that's done and is always buildable; every piece of work happens on its own short-lived branch and squash-merges into `main`. Each service is released on its own, and one file, `docker-compose.prod.yml`, lists the released version of every service.
+Elysium uses **trunk-based development with per-release-part releases**. `main` holds everything that's done and is always buildable; every piece of work happens on its own short-lived branch and squash-merges into `main`. Each release part (a service, or one of the parts it declares) is released on its own, and one file, `docker-compose.prod.yml`, lists the released version of every part.
 
 ```
 main                              trunk: every finished ticket; publishes the development version
@@ -138,7 +138,7 @@ Check these on your own branch first; the review checks them again. Items that d
 - [ ] **Decisions recorded:** any decision the ticket needed (a number, a rule, a choice between options) is written on the issue and in the relevant decision log before it closes, not only in the PR.
 - [ ] **Deferred work tracked:** work you chose not to do in this PR is a task in `ROADMAP.md` or a GitHub issue, not a comment in the code.
 
-## Releases (per service)
+## Releases (per release part)
 
 ### Versions and release parts
 
