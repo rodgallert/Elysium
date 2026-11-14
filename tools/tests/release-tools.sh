@@ -8,6 +8,16 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 failures=0
 
+# Guard: every git command here must act on the fixture repository under $work, never on the real one. The
+# cases change remotes and push tags; run against the real repository, they would rewrite its origin or push
+# to GitHub. So git ignores the user's and the system's configuration, never searches above $work for a
+# repository, and the script stops unless the fixture repository resolves inside $work (checked below).
+case "$work" in
+    "${TMPDIR:-/tmp}"/*) ;;
+    *) echo "Refusing to run: the work directory $work is not a fresh temporary directory" >&2; exit 1 ;;
+esac
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_CEILING_DIRECTORIES="$work"
+
 # expect <ok|fail> <description> <command...>: runs the command and checks its exit status
 expect() {
     local want="$1" what="$2" out got
@@ -38,6 +48,10 @@ compose_plain='services:
     build: ./web'
 echo "$compose_plain" >"$repo/Fake/docker-compose.yml"
 git -C "$repo" init -q -b main
+if [ "$(command git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null)" != "$(cd "$repo" && pwd -P)/.git" ]; then
+    echo "Refusing to run: the fixture repository doesn't resolve to $repo/.git" >&2
+    exit 1
+fi
 git() { command git -C "$repo" -c user.name=t -c user.email=t@t "$@"; }
 git add -A
 git commit -qm "chore: start"
@@ -196,6 +210,38 @@ check fail "a floating name fails" "image: nginx:stable@$d1"
 check fail "a registry that isn't allowed fails" "image: quay.io/team/thing:1.2.3@$d1"
 printf 'services: {}\n' >"$repo/docker-compose.prod.yml"
 expect ok   "an empty production list passes" "$T/check-prod-pins.sh" --offline
+
+echo "== release-state.sh (stubbed git remote, Releases API and registry)"
+# The fixture's own bare remote holds the tags; curl and `docker buildx imagetools` are the stubs in
+# tools/tests/stubs, answering from STUB_HTTP and STUB_REGISTRY
+git init -q --bare "$work/origin.git"
+git remote add origin "$work/origin.git"
+stubs="$tools/tests/stubs"
+export REAL_DOCKER
+REAL_DOCKER="$(command -v docker)"
+# state <ok|fail> <description> [<expected output>]; STUB_HTTP and STUB_REGISTRY come from the caller
+state() {
+    local cmd=(env PATH="$stubs:$PATH" GITHUB_REPOSITORY=rodgallert/Elysium "$T/release-state.sh" fake-api 0.4.0)
+    if [ -n "${3:-}" ]; then
+        # shellcheck disable=SC2016 # expanded by the inner shell
+        expect "$1" "$2" bash -c '[ "$("$@")" = "$0" ]' "$3" "${cmd[@]}"
+    else
+        expect "$1" "$2" "${cmd[@]}"
+    fi
+}
+printf 'services:\n  api:\n    image: ghcr.io/rodgallert/elysium-fake-api:0.4.0@%s\n' "$d1" >"$repo/docker-compose.prod.yml"
+STUB_HTTP=404 STUB_REGISTRY=missing state ok "nothing released yet: unreleased (the source check runs)" unreleased
+STUB_HTTP=500 STUB_REGISTRY=missing state fail "a Releases API error fails, never read as unreleased"
+STUB_HTTP=000 STUB_REGISTRY=missing state fail "no answer from the Releases API fails"
+STUB_HTTP=404 STUB_REGISTRY=error state fail "a registry error fails, never read as not tagged"
+git tag fake-api-v0.4.0
+git push -q origin fake-api-v0.4.0
+STUB_HTTP=200 STUB_REGISTRY="$d1" state ok "a hotfix copy-back of a released version: released (the source check is skipped)" released
+STUB_HTTP=200 STUB_REGISTRY="$d2" state fail "released, but the pin isn't the released digest: fails"
+STUB_HTTP=404 STUB_REGISTRY="$d1" state fail "a tag without a Release (partly released) fails"
+STUB_HTTP=200 STUB_REGISTRY=error state fail "a registry error on a released version fails"
+git remote set-url origin "$work/nowhere.git"
+STUB_HTTP=200 STUB_REGISTRY="$d1" state fail "a git remote that can't be read fails"
 
 echo
 if [ "$failures" -gt 0 ]; then

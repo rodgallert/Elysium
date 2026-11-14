@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Test stub for tools/tests/release-tools.sh: answers every request with the HTTP status in STUB_HTTP
+# (000 means no answer, like a network error).
+if [ "$STUB_HTTP" = 000 ]; then
+    printf 000
+    exit 7
+fi
+printf '%s' "$STUB_HTTP"

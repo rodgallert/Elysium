@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Test stub for tools/tests/release-tools.sh: `docker buildx imagetools inspect` answers from STUB_REGISTRY
+# ("missing": the tag doesn't exist; "error": the registry fails; anything else: the digest). Every other docker
+# command (compose) runs the real docker at REAL_DOCKER.
+if [ "$1 $2 $3" = "buildx imagetools inspect" ]; then
+    case "$STUB_REGISTRY" in
+        error) echo "ERROR: failed to authorize: 403 Forbidden" >&2; exit 1 ;;
+        missing) echo "ERROR: $4: not found" >&2; exit 1 ;;
+        *) printf '{"digest":"%s"}' "$STUB_REGISTRY" ;;
+    esac
+else
+    exec "$REAL_DOCKER" "$@"
+fi
