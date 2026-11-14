@@ -1,0 +1,126 @@
+# Builds one image of a release part, makes its SBOM and, when asked, pushes it and attests it. Used by
+# .github/workflows/release.yml for the prepare run (push and sign) and the dry runs (neither, or sign only).
+# The job checks out the repository first.
+name: Release image
+description: Build, SBOM, push by digest and attest one release image
+
+inputs:
+  part:
+    description: The release part (tools/release-parts.sh)
+    required: true
+  version:
+    description: The part's version, x.y.z
+    required: true
+  image:
+    description: Image name, e.g. elysium-prince-core-api
+    required: true
+  context:
+    description: Build context
+    required: true
+  file:
+    description: Dockerfile
+    required: true
+  push:
+    description: "'true' pushes the image by digest (no tag; the release job tags it when the release PR merges)"
+    default: 'false'
+  sign:
+    description: "'true' creates the signed SBOM and provenance attestations (needs id-token and attestations: write)"
+    default: 'false'
+
+outputs:
+  digest:
+    description: The image's manifest digest
+    value: ${{ steps.build.outputs.digest }}
+
+runs:
+  using: composite
+  steps:
+    - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+    - if: inputs.push == 'true'
+      uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+
+    # OCI labels: source links the package to the repository, revision is the commit the image is built from
+    # (the release job compares that commit's service folder with the merged one), version is the part's version
+    - id: meta
+      uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+      with:
+        images: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
+        tags: type=raw,value=${{ inputs.version }}
+        labels: |
+          org.opencontainers.image.title=${{ inputs.image }}
+          org.opencontainers.image.version=${{ inputs.version }}
+
+    # Always exported as an OCI archive, for the SBOM; in a prepare run also pushed by digest only (the same
+    # manifest). BuildKit's own unsigned SBOM and provenance stay off; the signed attestations below replace them,
+    # as in the publish job.
+    - id: build
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.file }}
+        provenance: false
+        sbom: false
+        labels: ${{ steps.meta.outputs.labels }}
+        outputs: |
+          type=oci,dest=${{ runner.temp }}/${{ inputs.image }}.tar
+          ${{ inputs.push == 'true' && format('type=image,name=ghcr.io/{0}/{1},push-by-digest=true,name-canonical=true,push=true', github.repository_owner, inputs.image) || '' }}
+        cache-from: type=gha,scope=${{ inputs.image }}
+
+    # From the local archive, so syft never sees a registry credential; the archive must hold the pushed manifest
+    - name: SBOM (syft, SPDX JSON)
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        DIGEST: ${{ steps.build.outputs.digest }}
+      run: |
+        archived="$(tar -xOf "$RUNNER_TEMP/$IMAGE.tar" index.json | jq -r '.manifests[0].digest')"
+        if [ "$archived" != "$DIGEST" ]; then
+          echo "::error::the archive holds $archived, but the build's digest is $DIGEST"
+          exit 1
+        fi
+        docker run --rm -v "$RUNNER_TEMP:/work" \
+          anchore/syft:v1.55.0@sha256:4cc92b64ca74ffca4c94d4c8fcc01f217731375300be14d0b6eeb2e82eaa110a \
+          scan "oci-archive:/work/$IMAGE.tar" -o "spdx-json=/work/$IMAGE.spdx.json"
+        jq -r '"SBOM: \(.packages | length) packages"' "$RUNNER_TEMP/$IMAGE.spdx.json"
+
+    - if: inputs.sign == 'true'
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      with:
+        subject-name: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
+        subject-digest: ${{ steps.build.outputs.digest }}
+        push-to-registry: ${{ inputs.push }}
+        create-storage-record: ${{ inputs.push }}
+
+    - if: inputs.sign == 'true'
+      uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+      with:
+        subject-name: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
+        subject-digest: ${{ steps.build.outputs.digest }}
+        sbom-path: ${{ runner.temp }}/${{ inputs.image }}.spdx.json
+        push-to-registry: ${{ inputs.push }}
+        create-storage-record: ${{ inputs.push }}
+
+    - name: Record the digest
+      shell: bash
+      env:
+        PART: ${{ inputs.part }}
+        IMAGE: ${{ inputs.image }}
+        VERSION: ${{ inputs.version }}
+        DIGEST: ${{ steps.build.outputs.digest }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/release"
+        jq -n --arg part "$PART" --arg image "$IMAGE" --arg version "$VERSION" --arg digest "$DIGEST" \
+          '{part: $part, image: $image, version: $version, digest: $digest}' >"$RUNNER_TEMP/release/$IMAGE.digest.json"
+        cp "$RUNNER_TEMP/$IMAGE.spdx.json" "$RUNNER_TEMP/release/"
+        echo "$IMAGE: $DIGEST"
+
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: release-${{ inputs.image }}
+        path: ${{ runner.temp }}/release/
+        retention-days: 14

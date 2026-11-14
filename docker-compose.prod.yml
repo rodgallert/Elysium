@@ -1,0 +1,10 @@
+# What's in production: every released service, each image pinned to its version and digest
+# (ghcr.io/rodgallert/elysium-<service>-<component>:<x.y.z>@sha256:<digest>). Its history is the release history.
+#
+# Never edited by hand for a version: a release PR adds a service's blocks (first release, tag only), and the
+# release workflow's prepare run writes every image's tag and digest (Docs/workflow.md, Releases).
+# tools/check-prod-pins.sh checks every line in CI. Production updates only by a deliberate
+#   docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
+#
+# No service has been released yet.
+services: {}

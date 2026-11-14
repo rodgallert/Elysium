@@ -1,0 +1,327 @@
+# Releases the versioned parts of services (tools/release-parts.sh); see Docs/workflow.md, "Releases".
+#
+# - prepare: a manual run on a release PR's branch. Builds every image of the part from the branch, pushes it by
+#   digest (no tag), attests its SBOM and provenance, writes <name>:<version>@<digest> into
+#   docker-compose.prod.yml and commits that to the branch.
+# - release: a merged "chore(release): ..." commit on main or a release branch. Checks the pinned digests and
+#   tags them (no rebuild), creates the git tag <part>-v<version> and the GitHub Release (tools/release-publish.sh).
+# - dry run: every step without pushing an image, creating a tag or creating a Release. A manual run (signs, on
+#   any branch) or, without signing, every pull request that changes the release tooling.
+name: Release
+
+on:
+  push:
+    branches: [main, 'release/**']
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/actions/release-image/**
+      - tools/release-*.sh
+      - tools/check-prod-pins.sh
+      - tools/list-images.sh
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: dry-run rehearses everything and publishes nothing; prepare builds and pins a release PR's images
+        type: choice
+        options: [dry-run, prepare]
+        default: dry-run
+      part:
+        description: Release part, e.g. prince (a service with no version file yet can only be dry-run)
+        type: string
+        required: true
+      version:
+        description: Dry run only; the version to rehearse (default the part's current version, else 0.0.0)
+        type: string
+        required: false
+
+permissions: {}
+
+# One release run per branch at a time, never cancelled half-way
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      parts: ${{ steps.plan.outputs.parts }}
+      images: ${{ steps.plan.outputs.images }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          MODE: ${{ inputs.mode }}
+          PART: ${{ inputs.part }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          case "$EVENT" in
+            push)
+              mode=release
+              plan="$(tools/release-plan.sh merged HEAD)" ;;
+            pull_request)
+              mode=dry-run-pr
+              plan="$(tools/release-plan.sh --drafts all)" ;;
+            workflow_dispatch)
+              mode="$MODE"
+              if [ "$MODE" = prepare ]; then
+                if [[ "$GITHUB_REF" == refs/heads/main || "$GITHUB_REF" == refs/heads/release/* || "$GITHUB_REF" != refs/heads/* ]]; then
+                  echo "::error::prepare runs on a release PR's branch, never on main or a release branch"
+                  exit 1
+                fi
+                if [ -n "$VERSION" ]; then
+                  echo "::error::prepare takes the version from the part's version file, not an input"
+                  exit 1
+                fi
+                plan="$(tools/release-plan.sh part "$PART")"
+              else
+                plan="$(tools/release-plan.sh --drafts part "$PART" "$VERSION")"
+              fi ;;
+          esac
+          echo "$plan" | jq .
+          {
+            echo "mode=$mode"
+            echo "parts=$(jq -c .parts <<<"$plan")"
+            echo "images=$(jq -c .images <<<"$plan")"
+          } >> "$GITHUB_OUTPUT"
+
+  # Dry run on a pull request: build, SBOM, notes and pin, no signing (a pull request gets no OIDC token here)
+  dry-run-pr:
+    name: dry-run-pr (${{ matrix.image.image }})
+    needs: plan
+    if: needs.plan.outputs.mode == 'dry-run-pr' && needs.plan.outputs.images != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.plan.outputs.images) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/release-image
+        with:
+          part: ${{ matrix.image.part }}
+          version: ${{ matrix.image.version }}
+          image: ${{ matrix.image.image }}
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.file }}
+
+  # Manual dry run: also signs the SBOM and provenance, for a digest that is never pushed
+  dry-run:
+    name: dry-run (${{ matrix.image.image }})
+    needs: plan
+    if: needs.plan.outputs.mode == 'dry-run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(needs.plan.outputs.images) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/release-image
+        with:
+          part: ${{ matrix.image.part }}
+          version: ${{ matrix.image.version }}
+          image: ${{ matrix.image.image }}
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.file }}
+          sign: 'true'
+
+  # The rest of a dry run: release notes, the production pin and the tag, Release and image commands, as a summary
+  dry-run-summary:
+    needs: [plan, dry-run-pr, dry-run]
+    if: >-
+      !cancelled() && !failure()
+      && (needs.plan.outputs.mode == 'dry-run' || needs.plan.outputs.mode == 'dry-run-pr')
+      && needs.plan.outputs.images != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: ${{ runner.temp }}/release
+          merge-multiple: true
+      - name: Summarise what a release would do
+        env:
+          PARTS: ${{ needs.plan.outputs.parts }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          dir="$RUNNER_TEMP/release"
+          {
+            echo "# Release dry run"
+            echo
+            echo "Nothing was pushed, tagged or released."
+            while IFS=$'\t' read -r part version changelog; do
+              tag="$part-v$version"
+              echo
+              echo "## $part $version"
+              echo
+              echo "| Image | Digest | SBOM packages |"
+              echo "|---|---|---|"
+              pairs=()
+              for f in $(jq -r --arg p "$part" 'select(.part == $p) | input_filename' "$dir"/*.digest.json | sort); do
+                image="$(jq -r .image "$f")"; digest="$(jq -r .digest "$f")"
+                echo "| \`$image\` | \`$digest\` | $(jq '.packages | length' "$dir/$image.spdx.json") |"
+                pairs+=("$image=$digest")
+              done
+              echo
+              echo "### Production pin (docker-compose.prod.yml)"
+              echo
+              cp docker-compose.prod.yml "$RUNNER_TEMP/prod.yml"
+              echo '```diff'
+              if tools/release-pin.sh --file "$RUNNER_TEMP/prod.yml" "$version" "${pairs[@]}" 2>"$RUNNER_TEMP/pin.err"; then
+                diff -u docker-compose.prod.yml "$RUNNER_TEMP/prod.yml" | tail -n +3 || true
+              else
+                cat "$RUNNER_TEMP/pin.err"
+                echo "# The release PR adds the part's blocks; the prepare run would then write:"
+                for pair in "${pairs[@]}"; do echo "+    image: ghcr.io/$OWNER/${pair%%=*}:$version@${pair#*=}"; done
+              fi
+              echo '```'
+              echo
+              echo "### Release notes ($changelog)"
+              echo
+              tools/release-notes.sh --draft "$changelog" "$part" "$version"
+              echo
+              echo "### When the release PR merges"
+              echo
+              echo '```'
+              if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+                echo "# tag $tag already exists: this version can't be released again"
+              fi
+              for pair in "${pairs[@]}"; do
+                echo "docker buildx imagetools create --prefer-index=false --tag ghcr.io/$OWNER/${pair%%=*}:$version ghcr.io/$OWNER/${pair%%=*}@${pair#*=}"
+              done
+              echo "git tag -a $tag -m '$part $version' <merge commit> && git push origin refs/tags/$tag"
+              echo "gh release create $tag --verify-tag --latest=false --title '$part $version' --notes-file <notes above> <SBOMs>"
+              echo '```'
+            done < <(jq -r '.[] | [.part, .version, .changelog] | @tsv' <<<"$PARTS")
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$GITHUB_STEP_SUMMARY"
+
+  # Prepare a release PR: push every image of the part by digest, with SBOM and provenance attestations
+  prepare:
+    name: prepare (${{ matrix.image.image }})
+    needs: plan
+    if: needs.plan.outputs.mode == 'prepare'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: true
+      matrix:
+        image: ${{ fromJSON(needs.plan.outputs.images) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/release-image
+        with:
+          part: ${{ matrix.image.part }}
+          version: ${{ matrix.image.version }}
+          image: ${{ matrix.image.image }}
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.file }}
+          push: 'true'
+          sign: 'true'
+
+  # Write the digests into docker-compose.prod.yml on the release PR's branch, then start its build, since a
+  # commit pushed with the workflow token starts no workflow by itself
+  prepare-pin:
+    needs: [plan, prepare]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: ${{ runner.temp }}/release
+          merge-multiple: true
+      - name: Pin the images and push to the branch
+        env:
+          PARTS: ${{ needs.plan.outputs.parts }}
+          BRANCH: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          while IFS=$'\t' read -r part version; do
+            mapfile -t pairs < <(jq -r --arg p "$part" 'select(.part == $p) | "\(.image)=\(.digest)"' "$RUNNER_TEMP"/release/*.digest.json)
+            tools/release-pin.sh "$version" "${pairs[@]}"
+          done < <(jq -r '.[] | [.part, .version] | @tsv' <<<"$PARTS")
+          tools/check-prod-pins.sh --release
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "$(jq -r '"chore(release): pin " + (map(.part + " " + .version) | join(", ")) + " images"' <<<"$PARTS")"
+          # Fails if the branch moved since this run started: prepare again from the new head
+          git push origin "HEAD:refs/heads/$BRANCH"
+          gh workflow run build.yml --ref "$BRANCH" -f release=true
+
+  # A merged release: tag the prepared digests, create the git tags and the GitHub Releases.
+  # The only job of the release that can write both the repository and packages.
+  release:
+    needs: plan
+    if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.parts != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      packages: write
+      attestations: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Release every part the merge released
+        env:
+          PARTS: ${{ needs.plan.outputs.parts }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          tools/check-prod-pins.sh --release
+          while IFS=$'\t' read -r part version; do
+            echo "::group::$part $version"
+            tools/release-publish.sh "$part" "$version"
+            echo "::endgroup::"
+          done < <(jq -r '.[] | [.part, .version] | @tsv' <<<"$PARTS")

@@ -53,22 +53,23 @@ A phase has no branch. `tools/board.sh <epic> "In progress"`, and move the phase
 2. Ask the PO to check the phase's **Done when** on a running stack, with exact steps (commands, requests, screens) and what to expect, on a named `main` commit (give its hash: `main` keeps moving). Move the epic to **In review** meanwhile.
 3. When both pass: tag **that checked commit** (`git tag -a phase-<n>-done -m "Phase <n>: <name>" <checked-commit> && git push origin phase-<n>-done`), close the epic with a comment naming the tag, and `tools/board.sh <epic> "Done"`.
 
-### `release <service> <x.y.z>`: release one service
-1. Check the service's milestone: every ticket is closed and on `main`, and the phase checkpoint it depends on (if any) has passed. Leftovers move to the next milestone only with the PO's OK.
-2. Work the release ticket like any ticket (`start`), on `chore/release-<service>-<x.y.z>`: bump the service's version in its project file; in its `CHANGELOG.md` move the "Unreleased" entries under the new version with a "Breaking changes" heading (every breaking change since its last release, with what can break and what to do, or "None") and a "Known issues" line; update its image pin in `docker-compose.prod.yml`. Search the milestone for `BREAKING CHANGE:` commits and issues with a breaking-change note.
-3. Run the service's smoke test, security pass and performance pass on the release PR's head (`Docs/workflow.md`, release step 2) and record the results in the PR. Fixes are separate `fix/` tickets merged first.
-4. Open the PR (title `chore(release): <service> <x.y.z>`), get it reviewed at release level, and ask the PO to approve and merge it (**squash**, like every PR).
-5. After the merge, check that CI created the tag `<service>-v<x.y.z>`, published the service's images (`ghcr.io/rodgallert/elysium-<service>-<component>:<x.y.z>`) and created the GitHub Release. If it didn't, tell the PO what failed; never create the tag by hand.
+### `release <part> <x.y.z>`: release one release part
+A release part is a service, or one of the parts it declares (`Docs/workflow.md`, "Versions and release parts").
+1. Check the part's milestone: every ticket is closed and on `main`, and the phase checkpoint it depends on (if any) has passed. Leftovers move to the next milestone only with the PO's OK.
+2. Work the release ticket like any ticket (`start`), on `chore/release-<part>-<x.y.z>`: bump the part's version in its version file (`Docs/workflow.md`, "Versions and release parts"); in its `CHANGELOG.md` move the "Unreleased" entries under the new version with a "Breaking changes" heading (every breaking change since its last release, with what can break and what to do, or "None") and a "Known issues" line; for a first release, add the service's blocks to `docker-compose.prod.yml` (tag only). Then run the Release workflow's `prepare` run on the branch, which pins the image digests. Search the milestone for `BREAKING CHANGE:` commits and issues with a breaking-change note.
+3. Run the part's smoke test, security pass and performance pass on the release PR's head (`Docs/workflow.md`, release step 2) and record the results in the PR. Fixes are separate `fix/` tickets merged first.
+4. Open the PR (title `chore(release): <part> <x.y.z>`), get it reviewed at release level, and ask the PO to approve and merge it (**squash**, like every PR).
+5. After the merge, check that CI created the tag `<part>-v<x.y.z>`, tagged the part's images (`ghcr.io/rodgallert/elysium-<service>-<component>:<x.y.z>`) and created the GitHub Release. If it didn't, tell the PO what failed; never create the tag by hand.
 6. Close the milestone (`gh api -X PATCH repos/rodgallert/Elysium/milestones/<number> -f state=closed`).
 
 ### `hotfix <ticket>`: fix a released version
 1. Fix it on `main` first as a normal `fix/` ticket.
-2. If `main` has nothing else for that service since its release, do `release` as a patch version. Otherwise:
-3. Create `release/<service>-<x.y>` from the service's release tag if it doesn't exist (`git push origin <service>-v<x.y.z>^{commit}:refs/heads/release/<service>-<x.y>`), branch `hotfix/<service>-<x.y.z+1>` from it (from the issue: `gh issue develop <n> -R rodgallert/Elysium --base release/<service>-<x.y> --name hotfix/<service>-<x.y.z+1>`), cherry-pick the fix, bump the patch version and the changelog, and open the PR into the release branch.
-4. After the PO merges it and CI publishes the image, open a PR into `main` that updates the production pin and the changelog.
+2. If `main` has nothing else for that part since its release, do `release` as a patch version. Otherwise:
+3. If `release/<part>-<x.y>` doesn't exist, ask the PO to create it from the part's release tag (`git push origin <part>-v<x.y.z>^{commit}:refs/heads/release/<part>-<x.y>`; only the repository admin may create release branches, `Docs/workflow.md`, "Version tags and release branches"). Then branch `hotfix/<part>-<x.y.z+1>` from it (from the issue: `gh issue develop <n> -R rodgallert/Elysium --base release/<part>-<x.y> --name hotfix/<part>-<x.y.z+1>`), cherry-pick the fix, bump the patch version in the part's version file and the changelog, open the PR into the release branch, and run the Release workflow's `prepare` run on the hotfix branch.
+4. After the PO merges it and CI releases it, open a PR into `main` (`chore(release): <part> <x.y.z+1>`) that copies the version, the changelog and the production pin; CI sees that version is already released.
 
 ## Rules
-- **Pushing:** the flow's steps push without asking: creating ticket, release and hotfix branches, pushing phase tags, and pushing a working branch's commits while its PR is open. Never force-push, never push commits to `main` or a release branch, never create release tags (CI does), and never merge: the PO merges.
+- **Pushing:** the flow's steps push without asking: creating ticket and hotfix branches, pushing phase tags, and pushing a working branch's commits while its PR is open. Never force-push, never push commits to `main` or a release branch, never create release tags (CI does) or release branches (the PO does), and never merge: the PO merges.
 - The board follows the work, never the other way round: move an issue when its step actually happens, not ahead of time.
 - New work found along the way (a bug, a "Later" item from a review) gets its own issue in **Backlog** with the right labels and milestone. Never widen a ticket silently.
 - If `tools/board.sh` fails (no `project` scope, board missing), still do the issue steps and tell the PO what failed.
