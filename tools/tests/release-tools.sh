@@ -271,6 +271,12 @@ changed="$(git rev-parse HEAD)"
 git checkout -q main
 STUB_REVISION="$changed" STUB_ATTESTED="$changed" state fail "images built with other release tooling than the tagged commit's fail"
 
+# A tag put on an older commit on main, with that commit's own genuine, attested build, under a version it never had
+older="$(git log --format=%H -1 --fixed-strings --grep="chore(release): fake-api 0.2.0")"
+git tag -f -a fake-api-v0.4.0 -m "fake-api 0.4.0" "$older" >/dev/null
+git push -q -f origin fake-api-v0.4.0
+STUB_REVISION="$older" STUB_ATTESTED="$older" state fail "a tag on an older main commit whose version file says another version fails"
+
 # A tag moved onto a commit that is only on an unprotected branch (same service and tooling trees)
 git checkout -q -b unprotected
 echo "elsewhere" >"$repo/OTHER.md"

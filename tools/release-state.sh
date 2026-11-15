@@ -9,7 +9,8 @@
 #                 workflow, on a GitHub-hosted runner, for the commit the images were built from;
 #               - that commit's service folder and release tooling equal the tagged commit's
 #                 (tools/release-check-source.sh --attested --against);
-#               - the tagged commit is on main or a release/** branch, which change only through reviewed PRs
+#               - the tagged commit is on main or a release/** branch, which change only through reviewed PRs,
+#                 and its version file says <version>
 #   unreleased  none of these exist yet (an ordinary release PR)
 #
 # Anything else fails (exit 1): a lookup that errors (network, registry, API, permissions) instead of answering
@@ -83,6 +84,14 @@ prove_released() {
         if git merge-base --is-ancestor "$tagged" "$tip"; then on_branch=yes; break; fi
     done
     [ "$on_branch" = yes ] || fail "tag $tag is on $tagged, which isn't on main or a release branch"
+
+    # The tagged commit must itself carry this version, so a tag put on an older commit can't make that commit's
+    # genuine build count as released under a version it never had
+    local file tagged_version
+    file="$(jq -r .versionFile <<<"$info")"
+    tagged_version="$(tools/release-parts.sh version "$file" "$tagged")"
+    [ "$tagged_version" = "$version" ] ||
+        fail "tag $tag is on $tagged, whose $file says '${tagged_version:-no version}', not $version"
 
     sboms="$(mktemp -d)"
     tools/release-check-source.sh --attested "$sboms" --against "$tagged" "$part" "$version" >/dev/null ||
