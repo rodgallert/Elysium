@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Fixture tests for the release scripts (tools/release-*.sh, tools/check-prod-pins.sh). Offline: no registry.
 # Run from anywhere: tools/tests/release-tools.sh (VERBOSE=1 also shows each case's output)
+# shellcheck disable=SC2016 # the cases hand single-quoted scripts to inner shells, which expand their own parameters
 set -uo pipefail
 
 tools="$(cd "$(dirname "$0")/.." && pwd)"
@@ -290,7 +291,6 @@ STUB_REVISION="$elsewhere" STUB_ATTESTED="$elsewhere" state fail "a tag on a com
 git push -q origin "$elsewhere:refs/heads/release/fake-api-0.4"
 STUB_REVISION="$elsewhere" STUB_ATTESTED="$elsewhere" state ok "the same tag once its commit is on a release branch: released" released
 
-# shellcheck disable=SC2016 # the inner shells expand their own positional parameters
 echo "== release-publish.sh (stubbed registry, Releases and source check; its own bare remote)"
 # Claiming the version: the git tag is pushed first, and a run that doesn't win it never tags an image. The remote
 # has a pre-receive hook (tools/tests/publish-stubs/pre-receive) that lets a "racing" run win the push first.
