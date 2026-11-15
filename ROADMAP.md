@@ -7,10 +7,13 @@
 The design lives in `Docs/platform-design.md`. This file says what gets built, in which order, and
 when each phase counts as done. Tick a box when its ticket merges into `main`.
 
-## Milestones (per-service releases)
+## Milestones (one per release part)
 
-Each service is released on its own (`Docs/workflow.md`, "Releases"). A GitHub milestone is one
-service release; `docker-compose.prod.yml` lists what's in production.
+Each release part (a service, or one of the parts a service declares) is released on its own, with
+its own version, tag and GitHub Release (`Docs/workflow.md`, "Releases"). A GitHub milestone is one
+release of one part, named after the part; `docker-compose.prod.yml` lists what's in production.
+Prince's split into parts isn't decided yet (Prince design sprint), so "Prince v0.1" stands for the
+whole service until then.
 
 | Milestone | Comes from | What it gives |
 |---|---|---|
