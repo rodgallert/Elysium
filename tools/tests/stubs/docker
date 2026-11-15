@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Test stub for tools/tests/release-tools.sh. `docker buildx imagetools inspect` answers from the environment:
+#   --format '{{json .Image}}' (the revision label): STUB_REVISION
+#   anything else (a digest): STUB_REGISTRY, where "missing" means the tag doesn't exist and "error" a failing
+#   registry
+# Every other docker command (compose) runs the real docker at REAL_DOCKER. Refuses to run outside the tests.
+[ "${RELEASE_TOOLS_TEST:-}" = 1 ] || { echo "tools/tests/stubs/docker is a test stub" >&2; exit 99; }
+if [ "$1 $2 $3" = "buildx imagetools inspect" ]; then
+    case "$STUB_REGISTRY" in
+        error) echo "ERROR: failed to authorize: 403 Forbidden" >&2; exit 1 ;;
+        missing) echo "ERROR: $4: not found" >&2; exit 1 ;;
+    esac
+    if [[ "$*" == *'.Image'* ]]; then
+        printf '{"config":{"Labels":{"org.opencontainers.image.revision":"%s"}}}' "$STUB_REVISION"
+    else
+        printf '{"digest":"%s"}' "$STUB_REGISTRY"
+    fi
+else
+    [ -n "${REAL_DOCKER:-}" ] && [ -x "$REAL_DOCKER" ] || { echo "REAL_DOCKER is not set to docker" >&2; exit 99; }
+    exec "$REAL_DOCKER" "$@"
+fi

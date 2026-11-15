@@ -64,6 +64,10 @@ jobs:
   release-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # attestations: read lets tools/release-state.sh verify a released version's attestations
+    permissions:
+      contents: read
+      attestations: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -81,6 +85,7 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
           TITLE: ${{ github.event.pull_request.title }}
           RELEASE_INPUT: ${{ inputs.release }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           args=()
           parts='[]'
@@ -90,9 +95,15 @@ jobs:
           fi
           if [ "$parts" != '[]' ] || [ "$RELEASE_INPUT" = true ]; then args+=(--release); fi
           tools/check-prod-pins.sh "${args[@]}"
+          # A version that is already released (a hotfix's version and pin copied back to main) was checked when
+          # it was released; its images were built from the release branch, not from this merge, so the source
+          # check doesn't apply. tools/release-state.sh fails on any lookup error or partial release.
           while IFS=$'\t' read -r part version; do
-            echo "Release PR: $part $version"
-            tools/release-check-source.sh "$part" "$version"
+            state="$(tools/release-state.sh "$part" "$version")"
+            echo "Release PR: $part $version ($state)"
+            if [ "$state" = unreleased ]; then
+              tools/release-check-source.sh "$part" "$version"
+            fi
           done < <(jq -r '.[] | [.part, .version] | @tsv' <<<"$parts")
 
   # Every folder with a package.json under */Frontend/ is a frontend; found at run time, so adding an app needs no workflow change

@@ -4,7 +4,9 @@
 # (.github/workflows/release.yml, .github/actions/release-image/, tools/) are identical to HEAD's. Any change
 # there after the prepare run, CHANGELOG.md included, needs another prepare run. Prints the build commit.
 #
-#   release-check-source.sh [--attested <sbom dir>] <part> <version>
+#   release-check-source.sh [--attested <sbom dir>] [--against <commit>] <part> <version>
+#
+# --against compares with <commit> instead of HEAD (tools/release-state.sh: the commit a version tag points at).
 #
 # Without --attested (pull requests): the build commit is the images' org.opencontainers.image.revision label,
 # read from the registry. An early check that the release job repeats.
@@ -18,10 +20,18 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
+usage="usage: release-check-source.sh [--attested <sbom dir>] [--against <commit>] <part> <version>"
 sboms=""
-if [ "${1:-}" = "--attested" ]; then sboms="${2:?--attested needs a directory}"; shift 2; fi
-part="${1:?usage: release-check-source.sh [--attested <sbom dir>] <part> <version>}"
-version="${2:?usage: release-check-source.sh [--attested <sbom dir>] <part> <version>}"
+against=HEAD
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --attested) sboms="${2:?$usage}"; shift 2 ;;
+        --against) against="${2:?$usage}"; shift 2 ;;
+        *) break ;;
+    esac
+done
+part="${1:?$usage}"
+version="${2:?$usage}"
 repository="${GITHUB_REPOSITORY:?}"
 owner="${repository%%/*}"
 registry="${RELEASE_REGISTRY:-ghcr.io}"
@@ -66,9 +76,11 @@ done < <(jq -r '.images[].image' <<<"$info")
 
 git cat-file -e "$built_from^{commit}" 2>/dev/null || git fetch -q --no-tags origin "$built_from" ||
     fail "can't fetch $built_from, the commit the images were built from"
+git cat-file -e "$against^{commit}" 2>/dev/null || fail "$against is not a commit here"
 for path in "$folder" "${tooling[@]}"; do
-    if [ "$(git rev-parse "$built_from:$path" 2>/dev/null)" != "$(git rev-parse "HEAD:$path" 2>/dev/null)" ]; then
-        fail "$path changed since the prepare run built the images (from $built_from); prepare again before the merge, or release a new version after it"
+    # --verify -q prints nothing for a path a commit doesn't have (plain rev-parse would echo the argument)
+    if [ "$(git rev-parse --verify -q "$built_from:$path")" != "$(git rev-parse --verify -q "$against:$path")" ]; then
+        fail "$path differs between $built_from, the commit the images were built from, and $against; prepare again before the merge, or release a new version after it"
     fi
 done
 echo "$built_from"

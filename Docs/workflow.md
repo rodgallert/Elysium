@@ -213,7 +213,13 @@ docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compo
 An urgent fix to a released version:
 1. Fix it on `main` first, as a normal `fix/` ticket.
 2. If `main` holds nothing else for that part since its release, release it normally as a patch version.
-3. Otherwise, the PO creates `release/<part>-<x.y>` from the part's release tag (once per minor version: `git push origin <part>-v<x.y.z>^{commit}:refs/heads/release/<part>-<x.y>`; only the repository admin may create release branches). Then cherry-pick the fix onto a `hotfix/<part>-<x.y.z>` branch from it, bump the patch version and the changelog, open the PR into the release branch, and run the prepare run on the hotfix branch. Its merge releases the patch like a release PR into `main`. Then a PR into `main` (`chore(release): ...`) copies the version, the changelog and the production pin; CI sees that version is already released and does nothing.
+3. Otherwise, the PO creates `release/<part>-<x.y>` from the part's release tag (once per minor version: `git push origin <part>-v<x.y.z>^{commit}:refs/heads/release/<part>-<x.y>`; only the repository admin may create release branches). Then cherry-pick the fix onto a `hotfix/<part>-<x.y.z>` branch from it, bump the patch version and the changelog, open the PR into the release branch, and run the prepare run on the hotfix branch. Its merge releases the patch like a release PR into `main`. Then a PR into `main` (`chore(release): ...`) copies the version, the changelog and the production pin; CI sees that version is already released and does nothing. Its build skips the release PR's source check for that version, and the release job skips releasing it again, only when `tools/release-state.sh` proves it was really released. That means all of these hold:
+   - the git tag, the GitHub Release and every image tag exist and match the pins;
+   - every pinned digest has provenance and SBOM attestations signed by the release workflow for the commit it was built from;
+   - that commit's service folder and release tooling equal the tagged commit's;
+   - the tagged commit is on `main` or a `release/**` branch.
+
+   Anyone with push access can create a tag, a Release or an image tag, so those alone prove nothing. A lookup that errors, a release that is only partly done, or a state that can't be proven fails the check instead.
 
 ## Pushing
 

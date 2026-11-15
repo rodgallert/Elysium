@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Test stub for tools/tests/release-tools.sh: `gh attestation verify` succeeds only for attestations made for the
+# commit in STUB_ATTESTED (empty: the image has no attestations), signed by the release workflow on a
+# GitHub-hosted runner, like the real check with --signer-workflow, --source-digest and --deny-self-hosted-runners.
+# Refuses to run outside the tests.
+[ "${RELEASE_TOOLS_TEST:-}" = 1 ] || { echo "tools/tests/stubs/gh is a test stub" >&2; exit 99; }
+[ "$1 $2" = "attestation verify" ] || { echo "stub gh: unexpected command: $*" >&2; exit 99; }
+source_digest=""
+signer=""
+deny=no
+prev=""
+for arg in "$@"; do
+    case "$prev" in
+        --source-digest) source_digest="$arg" ;;
+        --signer-workflow) signer="$arg" ;;
+    esac
+    [ "$arg" = --deny-self-hosted-runners ] && deny=yes
+    prev="$arg"
+done
+if [ -z "${STUB_ATTESTED:-}" ] || [ "$source_digest" != "$STUB_ATTESTED" ] || [ "$deny" != yes ] ||
+    [[ "$signer" != */.github/workflows/release.yml ]]; then
+    echo "stub gh: no matching attestation" >&2
+    exit 1
+fi
+printf '[{"verificationResult":{"signature":{"certificate":{"sourceRepositoryDigest":"%s"}},"statement":{"predicate":{"spdxVersion":"SPDX-2.3"}}}}]' "$STUB_ATTESTED"
