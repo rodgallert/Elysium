@@ -12,13 +12,9 @@ name: Release
 on:
   push:
     branches: [main, 'release/**']
+  # Every pull request starts a run, so the Build workflow's gate always finds one to wait for; the plan job skips the
+  # dry run unless the PR changes the release tooling.
   pull_request:
-    paths:
-      - .github/workflows/release.yml
-      - .github/actions/release-image/**
-      - tools/release-*.sh
-      - tools/check-prod-pins.sh
-      - tools/list-images.sh
   workflow_dispatch:
     inputs:
       mode:
@@ -65,7 +61,14 @@ jobs:
               plan="$(tools/release-plan.sh merged HEAD)" ;;
             pull_request)
               mode=dry-run-pr
-              plan="$(tools/release-plan.sh --drafts all)" ;;
+              # The checkout is the PR's merge commit: HEAD^1 is the base. Only a change to the release tooling
+              # (what the pull request trigger used to filter on) gets the dry run
+              if git diff --name-only --no-renames HEAD^1 HEAD | grep -qE '^(\.github/workflows/release\.yml|\.github/actions/release-image/|tools/release-[^/]*\.sh|tools/check-prod-pins\.sh|tools/list-images\.sh)'; then
+                plan="$(tools/release-plan.sh --drafts all)"
+              else
+                echo "The release tooling is unchanged: no dry run"
+                plan='{"parts":[],"images":[]}'
+              fi ;;
             workflow_dispatch)
               mode="$MODE"
               if [ "$MODE" = prepare ]; then
@@ -91,7 +94,6 @@ jobs:
 
   # Dry run on a pull request: build, SBOM, notes and pin, no signing (a pull request gets no OIDC token here)
   dry-run-pr:
-    name: dry-run-pr (${{ matrix.image.image }})
     needs: plan
     if: needs.plan.outputs.mode == 'dry-run-pr' && needs.plan.outputs.images != '[]'
     runs-on: ubuntu-latest
@@ -116,7 +118,6 @@ jobs:
 
   # Manual dry run: also signs the SBOM and provenance, for a digest that is never pushed
   dry-run:
-    name: dry-run (${{ matrix.image.image }})
     needs: plan
     if: needs.plan.outputs.mode == 'dry-run'
     runs-on: ubuntu-latest
@@ -222,7 +223,6 @@ jobs:
 
   # Prepare a release PR: push every image of the part by digest, with SBOM and provenance attestations
   prepare:
-    name: prepare (${{ matrix.image.image }})
     needs: plan
     if: needs.plan.outputs.mode == 'prepare'
     runs-on: ubuntu-latest

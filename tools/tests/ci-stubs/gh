@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Test stub for tools/tests/ci-tools.sh: `gh run list` answers with the files response-1, response-2, ... in
+# STUB_DIR, one per call (the last one repeats). Refuses to run outside the tests.
+[ "${CI_TOOLS_TEST:-}" = 1 ] || { echo "tools/tests/ci-stubs/gh is a test stub" >&2; exit 99; }
+[ "$1 $2" = "run list" ] || { echo "stub gh: unexpected command: $*" >&2; exit 99; }
+n=$(($(cat "$STUB_DIR/calls" 2>/dev/null || echo 0) + 1))
+echo "$n" >"$STUB_DIR/calls"
+file="$STUB_DIR/response-$n"
+[ -f "$file" ] || file="$(find "$STUB_DIR" -name "response-*" | sort -V | tail -n 1)"
+cat "$file"

@@ -118,7 +118,7 @@ Every pull request is reviewed before it merges. The checks get wider at each le
 | Release → `main` | Same, on the release PR's head | Release-level review of the part: everything it gained since its last release | Everything listed for the milestone is in; version, changelog and the production pin agree | Required: the part's smoke test, security pass and performance pass (release step 3), with the results in the PR |
 | Hotfix → `release/<part>-<x.y>` | Same, on the hotfix branch | Release-level review of the fix | Version and changelog updated; the same fix is on `main` | The fix checked on the running stack |
 
-A ticket that only changes docs skips the build, the boundary check and the code review. Its review is a read-through checking that it agrees with the roadmap and the other docs. The GitHub Actions build doesn't run on Markdown-only changes, so such a PR shows no build check and none is required.
+A ticket that only changes docs skips the build, the boundary check and the code review. Its review is a read-through checking that it agrees with the roadmap and the other docs. The build jobs don't run on Markdown-only changes, but the `gate` check does and passes (see "Required check" below), so such a PR still shows a check; there is just no build to wait for.
 
 The review results go in the PR description. A review that finds problems sends the work back to the ticket (fix it on the same branch before merging, or open a new `fix/` ticket after). The merge only happens once the review is clean **and the PO has approved it**.
 
@@ -202,6 +202,30 @@ Actions → Release → Run workflow, mode `dry-run`, any part and branch (a ser
 **Release branches:** a push to `release/**` runs the release job, so these branches change only through reviewed PRs, like `main`, and only the PO creates them. Two branch rulesets (Settings → Rules → Rulesets → New branch ruleset), both enforcement **Active**, targeting branches matching `release/**`:
 - "Release branches": **Require a pull request before merging**, **Block force pushes**, **Restrict deletions**, no bypass. Nobody pushes to a release branch directly, the PO included.
 - "Release branch creation": **Restrict creations**, bypass list: the **Repository admin** role (always). Only the PO creates a release branch (Hotfixes, step 3). It's a separate ruleset so the admin bypass covers creation only, not direct pushes.
+
+### Required check
+
+`main` and `release/**` require one status check, `gate` (the last job of `.github/workflows/build.yml`), so a PR with red CI can't be merged. It's one job with one name because no build job could be the required check: the `frontends (<path>)` jobs change name whenever an app is added, renamed or removed, and GitHub counts a skipped required check as passing, so a build job skipped on a Markdown-only change (or because a job it needs failed) would let the PR through. The gate runs on every change (`if: always()`), so a failed or cancelled job is reported as a failed gate rather than left pending.
+
+What `gate` checks (`tools/ci-gate.sh`; its fixture tests, `tools/tests/ci-tools.sh`, run in the gate job first). The `changes` job (`tools/ci-code-changed.sh`) decides whether the change touches anything besides Markdown; there is no `paths-ignore` filter, because a filtered workflow never reports:
+
+| Case | Gate result |
+|---|---|
+| Code PR, every job green | Passes. `frontends` may be skipped only when the repository has no app; `publish` is skipped on pull requests (it runs, and must succeed, only on a push to `main` with images to publish) |
+| Markdown-only PR | Passes: `changes` ran, every build job was skipped as it should be, and the Release workflow's run on the PR is green |
+| Any job failed or was cancelled | Fails |
+| A job skipped that should have run (for example because a job it needs failed) | Fails |
+| A job ran that shouldn't have (`publish` on a pull request, a build job on a Markdown-only change) | Fails |
+
+The gate can't `needs` a job of another workflow, so for the Release workflow's pull request jobs (the dry run, run for every PR that changes the release tooling) it waits: after the checks above, on a pull request, `tools/ci-release-run.sh` lists the Release workflow's `pull_request` runs on the PR's head commit and waits for them (up to 5 minutes for one to appear, 40 for them to finish). Every such run on that commit must be green, not only "this PR's": another pull request can share the commit (the same branch into another base, a fork), the run list can't tell them apart reliably, and a green run of another PR must not cover this PR's red one. The price is that a red run of an unrelated PR on the same commit blocks this one, which is rare and safe. `release.yml` starts a run on every PR, with no path filter, so there is always one to find; its `plan` job skips the dry run unless the PR changes the release tooling (`.github/workflows/release.yml`, `.github/actions/release-image/`, `tools/release-*.sh`, `tools/check-prod-pins.sh`, `tools/list-images.sh`), so on most PRs the wait lasts seconds. A failed Release run is fixed by re-running it (a new attempt of the same run, which replaces the earlier result) and then re-running the gate. Nothing can pass early: the gate only finishes once the Release run has. Skipped matrix jobs have no `name:` of their own, so they show as `publish`, `dry-run-pr` and so on instead of an unrendered `${{ matrix.image.image }}`; nothing but `gate` is ever required.
+
+**Repository setting (the PO sets it once, and again if the check is ever renamed):** Settings → Rules → Rulesets, in both "Protect main" and "Release branches":
+- turn on **Require status checks to pass**, then **Add checks** and pick `gate` with source **GitHub Actions** (it shows in the list after the first run on a PR, so add it after the PR that introduces it has been through CI). Keep the source: it stops a plain commit status named `gate` posted with a personal token. After saving, confirm with `gh api repos/rodgallert/Elysium/rulesets/<id>`: the rule must read `{"context": "gate", "integration_id": 15368}`; a check added as "any source" has no `integration_id`;
+- leave **Require branches to be up to date before merging** off (a merge of `origin/main` into the branch is only asked for when there's a conflict, see Branches), and **Do not require status checks on creation** off.
+
+**What the gate guarantees, and what it doesn't:** it catches honest mistakes (red or unbuilt CI, a forgotten check) and fork PRs. It is only as strong as the review of changes to `.github/workflows/` and `tools/ci-*.sh` (and `tools/tests/ci-tools.sh`): a pull request from a branch of this repository runs its own versions of them, so a PR can change the gate that judges it, and that change is in the reviewed diff. The GitHub Actions source pin does not stop a workflow on any branch that asks for `checks: write` or `statuses: write` and posts a `gate` result, so someone with push access can still forge it. Fine for a single-collaborator repository; revisit it when that changes.
+
+Until the check is added, the rulesets still require no checks, and "Ready to merge" (see Reviews) is only as good as whoever reads the PR's checks.
 
 ### Production
 

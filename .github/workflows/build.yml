@@ -1,15 +1,16 @@
 # Builds and tests every .NET solution and every frontend in the repository, and checks the service boundaries.
 # On a push to main, once all of that passes, it also publishes the development images (see the publish job).
+# The `gate` job is the one check main and release/** require (Docs/workflow.md, "Required check"): it reports on every
+# change, Markdown-only ones included, and covers this workflow's jobs and the Release workflow's pull request run.
 name: Build
 
 # One build per change: pushes build only main and release branches, every other branch builds through its pull request.
-# Changes that only touch Markdown (docs, notes) skip the build.
+# Changes that only touch Markdown (docs, notes) skip the build jobs (the `changes` job decides, not a paths filter, so
+# the workflow still runs and the gate still reports).
 on:
   push:
     branches: [main, 'release/**']
-    paths-ignore: ['**/*.md']
   pull_request:
-    paths-ignore: ['**/*.md']
   workflow_dispatch:
     inputs:
       release:
@@ -28,7 +29,35 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Does the change touch anything besides Markdown? A pull request is judged against its base, a push against the
+  # commit before it (a new branch or an unknown commit counts as code), a manual run always builds.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.changes.outputs.code }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            # The checkout is the PR's merge commit: HEAD^1 is the base, HEAD what the merge will be
+            pull_request) code="$(tools/ci-code-changed.sh HEAD^1)" ;;
+            push) code="$(tools/ci-code-changed.sh "$BEFORE")" ;;
+            *) code=true ;;
+          esac
+          echo "Code changed: $code"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
   boundaries:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -37,6 +66,8 @@ jobs:
         run: tools/check-boundaries.sh
 
   dotnet:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -62,6 +93,8 @@ jobs:
   # release PR (one that changes a part's version, or the build the prepare run starts) must have every digest
   # pullable.
   release-checks:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # attestations: read lets tools/release-state.sh verify a released version's attestations
@@ -108,6 +141,8 @@ jobs:
 
   # Every folder with a package.json under */Frontend/ is a frontend; found at run time, so adding an app needs no workflow change
   find-frontends:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -119,7 +154,7 @@ jobs:
 
   frontends:
     needs: find-frontends
-    if: needs.find-frontends.outputs.apps != '[]'
+    if: needs.find-frontends.result == 'success' && needs.find-frontends.outputs.apps != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -146,6 +181,8 @@ jobs:
   # The images to publish, read from each service's docker-compose.yml (tools/list-images.sh). Runs on pull requests
   # too, so a Dockerfile that no Compose service builds fails the PR instead of silently never being published.
   find-images:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -162,10 +199,10 @@ jobs:
   # and only after the boundary check, every build and every test passed, because :main is what development runs.
   # The only job allowed to write packages; everything else stays read-only.
   publish:
-    name: publish (${{ matrix.image.image }})
-    needs: [boundaries, dotnet, frontends, find-images]
+    needs: [changes, boundaries, dotnet, frontends, find-images]
     if: >-
       !cancelled() && !failure()
+      && needs.changes.outputs.code == 'true'
       && github.event_name == 'push' && github.ref == 'refs/heads/main'
       && needs.find-images.outputs.images != '[]'
     runs-on: ubuntu-latest
@@ -218,3 +255,37 @@ jobs:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+
+  # The one check main and release/** require. It runs on every change (if: always()), so a Markdown-only pull
+  # request and a failed or cancelled job are both reported, and a required check can't stay "expected" forever.
+  # tools/ci-gate.sh holds every job to exactly what this change calls for; on a pull request the gate then waits
+  # for the Release workflow's run on the same commit (tools/ci-release-run.sh), whose dry run only does work when a
+  # PR changes the release tooling. A gate can't `needs` a job of another workflow, hence the wait. Both
+  # workflows start on the same event, and the gate looks the run up only after its own needs finished.
+  gate:
+    needs: [changes, boundaries, dotnet, release-checks, find-frontends, frontends, find-images, publish]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read # lists the Release workflow's runs
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Gate fixture tests
+        run: tools/tests/ci-tools.sh
+      - name: Every job did what this change calls for
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: tools/ci-gate.sh
+      - name: The Release workflow's run on this commit succeeded
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: tools/ci-release-run.sh "$HEAD_SHA"
