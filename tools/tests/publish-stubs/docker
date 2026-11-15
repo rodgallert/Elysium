@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Test stub for the release-publish.sh cases in tools/tests/release-tools.sh: a registry kept as files in
+# STUB_TAGS (one file per image reference, holding its digest). `imagetools inspect <ref>` reads it, `imagetools
+# create ... --tag <ref> <source>@<digest>` writes it and logs "tag <ref>" to $STUB_TAGS/log. Every other command
+# (compose) runs the real docker at REAL_DOCKER. Refuses to run outside the tests.
+[ "${RELEASE_TOOLS_TEST:-}" = 1 ] || { echo "tools/tests/publish-stubs/docker is a test stub" >&2; exit 99; }
+[ -d "${STUB_TAGS:-}" ] || { echo "STUB_TAGS is not a directory" >&2; exit 99; }
+if [ "$1 $2 $3" = "buildx imagetools inspect" ]; then
+    file="$STUB_TAGS/${4//\//_}"
+    [ -f "$file" ] || { echo "ERROR: $4: not found" >&2; exit 1; }
+    printf '{"digest":"%s"}' "$(cat "$file")"
+elif [ "$1 $2 $3" = "buildx imagetools create" ]; then
+    shift 3
+    tag=""; source=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --tag) tag="$2"; shift 2 ;;
+            --*) shift ;;
+            *) source="$1"; shift ;;
+        esac
+    done
+    printf '%s' "${source#*@}" >"$STUB_TAGS/${tag//\//_}"
+    echo "tag $tag" >>"$STUB_TAGS/log"
+else
+    [ -n "${REAL_DOCKER:-}" ] && [ -x "$REAL_DOCKER" ] || { echo "REAL_DOCKER is not set to docker" >&2; exit 99; }
+    exec "$REAL_DOCKER" "$@"
+fi

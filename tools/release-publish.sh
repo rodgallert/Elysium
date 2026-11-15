@@ -7,8 +7,11 @@
 #   2. checks the commit the images were built from, as the provenance certificate names it, has the same service
 #      folder and release tooling as HEAD, so the images come from the reviewed, merged code
 #      (tools/release-check-source.sh);
-#   3. tags every image <version> (same digest, no rebuild), creates the annotated git tag <part>-v<version> on
-#      HEAD and the GitHub Release with the part's changelog section and the attested SBOMs.
+#   3. builds the release notes and checks no image <version> tag points at another digest (read-only, so a failure
+#      doesn't use the version up), then creates the annotated git tag <part>-v<version> on HEAD as the claim on the
+#      version (a tag that exists is refused, so one run wins; a run that loses, or finds the tag on another commit,
+#      stops before tagging an image), then tags every image <version> (same digest, no rebuild) and creates the
+#      GitHub Release with the part's changelog section and the attested SBOMs.
 # Re-running is safe: steps already done are skipped, and something tagged differently fails. A version that is
 # already fully released (a hotfix's version and pin copied back to main) is skipped.
 #
@@ -52,7 +55,7 @@ released=true
 for image in "${!digests[@]}"; do
     [ "$(remote_digest "$registry/$owner/$image:$version")" = "${digests[$image]}" ] || released=false
 done
-if $released && git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null && gh release view "$tag" -R "$repository" >/dev/null 2>&1; then
+if $released && [ -n "$(tools/release-tag-commit.sh "$tag")" ] && gh release view "$tag" -R "$repository" >/dev/null 2>&1; then
     state="$(tools/release-state.sh "$part" "$version")" || fail "looks released, but the release can't be proven"
     [ "$state" = released ] || fail "looks released, but tools/release-state.sh says $state"
     echo "$tag is already released; nothing to do"
@@ -62,7 +65,34 @@ fi
 # 1 and 2. Attestations, and the images built from the merged code (tools/release-check-source.sh)
 tools/release-check-source.sh --attested "$out" "$part" "$version" >/dev/null
 
-# 3. Image tags, git tag, GitHub Release
+# 3. Everything that can still fail on content, read-only, before the claim: the git tag can't be moved or deleted,
+# so a failure after it would use the version up. The release notes, and no image tag <version> that already points
+# at another digest.
+tools/release-notes.sh "$changelog" "$part" "$version" >"$out/notes.md"
+for image in "${!digests[@]}"; do
+    current="$(remote_digest "$registry/$owner/$image:$version")"
+    [ -z "$current" ] || [ "$current" = "${digests[$image]}" ] ||
+        fail "$registry/$owner/$image:$version already exists as $current; release tags never move"
+done
+
+# 4. Claim the version with the git tag, before anything is written to the registry. A tag that exists is refused
+# by the server (a push can't replace it, and the "Release tags" ruleset blocks moving it), so exactly one run, on
+# one commit, wins the version. A run that loses stops here, before it touches an image tag. A tag already on HEAD
+# is a re-run of this same merge, and carries on with what is left.
+existing="$(tools/release-tag-commit.sh "$tag")"
+if [ -z "$existing" ]; then
+    git tag -a "$tag" -m "$part $version" HEAD
+    if git push origin "refs/tags/$tag"; then
+        existing="$(git rev-parse HEAD)"
+    else
+        existing="$(tools/release-tag-commit.sh "$tag")" # lost the push to another run?
+    fi
+fi
+[ -n "$existing" ] || fail "couldn't create the tag $tag"
+[ "$existing" = "$(git rev-parse HEAD)" ] || fail "tag $tag already exists on $existing, not on this commit; no image was tagged"
+echo "tag $tag is on this commit"
+
+# 5. Image tags (the same digests, no rebuild), then the GitHub Release
 for image in "${!digests[@]}"; do
     name="$registry/$owner/$image"
     current="$(remote_digest "$name:$version")"
@@ -76,15 +106,6 @@ for image in "${!digests[@]}"; do
     fi
 done
 
-if existing="$(git ls-remote --tags origin "refs/tags/$tag^{}" | cut -f1)" && [ -n "$existing" ]; then
-    [ "$existing" = "$(git rev-parse HEAD)" ] || fail "tag $tag already exists on $existing"
-    echo "tag $tag already exists"
-else
-    git tag -a "$tag" -m "$part $version" HEAD
-    git push origin "refs/tags/$tag"
-fi
-
-tools/release-notes.sh "$changelog" "$part" "$version" >"$out/notes.md"
 if gh release view "$tag" -R "$repository" >/dev/null 2>&1; then
     echo "Release $tag already exists"
 else

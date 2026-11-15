@@ -39,16 +39,9 @@ fail() { echo "$part $version: $*" >&2; exit 1; }
 info="$(tools/release-parts.sh | jq -c --arg p "$part" '.[] | select(.part == $p)')"
 [ -n "$info" ] || fail "no such release part"
 
-# Git tag: ls-remote exits 2 when nothing matches, anything else non-zero is an error
-set +e
-git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1
-code=$?
-set -e
-case "$code" in
-    0) git_tag=yes ;;
-    2) git_tag=no ;;
-    *) fail "can't look up the git tag $tag (git ls-remote exit $code)" ;;
-esac
+# Git tag, by its exact name (tools/release-tag-commit.sh; ls-remote alone also matches x/refs/tags/<tag>)
+tag_commit="$(tools/release-tag-commit.sh "$tag")" || fail "can't look up the git tag $tag"
+if [ -n "$tag_commit" ]; then git_tag=yes; else git_tag=no; fi
 
 # GitHub Release: 200 exists, 404 doesn't, anything else (including no answer) is an error
 auth=()
@@ -63,15 +56,15 @@ esac
 
 # The proof that a version which looks released came from a real release (see the header)
 prove_released() {
-    local refs tagged tips tip on_branch=no sboms
-    refs="$(git ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}")" || fail "can't look up the git tag $tag"
-    # An annotated tag's commit is its peeled (^{}) line; a lightweight tag points at the commit itself
-    tagged="$(awk -v t="refs/tags/$tag^{}" '$2 == t { print $1 }' <<<"$refs")"
-    [ -n "$tagged" ] || tagged="$(awk -v t="refs/tags/$tag" '$2 == t { print $1 }' <<<"$refs")"
+    local tagged tips tip on_branch=no sboms
+    # (exact ref names only: tools/release-tag-commit.sh)
+    tagged="$(tools/release-tag-commit.sh "$tag")" || fail "can't look up the git tag $tag"
     [[ "$tagged" =~ ^[0-9a-f]{40}$ ]] || fail "can't resolve the git tag $tag to a commit"
 
+    # ls-remote matches patterns by the end of a ref name, so a decoy such as x/refs/heads/main also answers: keep
+    # only refs that are exactly refs/heads/main or start with refs/heads/release/
     tips="$(git ls-remote --heads origin refs/heads/main 'refs/heads/release/*')" || fail "can't list main and the release branches"
-    tips="$(awk '{ print $1 }' <<<"$tips")"
+    tips="$(awk '$2 == "refs/heads/main" || index($2, "refs/heads/release/") == 1 { print $1 }' <<<"$tips")"
     [ -n "$tips" ] || fail "no main or release branch found"
     local missing=() commit
     for commit in "$tagged" $tips; do

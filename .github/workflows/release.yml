@@ -37,11 +37,6 @@ on:
 
 permissions: {}
 
-# One release run per branch at a time, never cancelled half-way
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   plan:
     runs-on: ubuntu-latest
@@ -212,7 +207,7 @@ jobs:
               echo "### When the release PR merges"
               echo
               echo '```'
-              if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              if [ -n "$(tools/release-tag-commit.sh "$tag")" ]; then
                 echo "# tag $tag already exists: this version can't be released again"
               fi
               for pair in "${pairs[@]}"; do
@@ -293,9 +288,21 @@ jobs:
 
   # A merged release: tag the prepared digests, create the git tags and the GitHub Releases.
   # The only job of the release that can write both the repository and packages.
+  #
+  # The concurrency group is on this job only and is named after the commit. A group per branch would let only one
+  # run wait: GitHub cancels a pending run when a newer one queues behind it, so with three quick release merges
+  # the middle release would be dropped, and a cancelled run doesn't show as a failure. Releases are independent
+  # (each has its own tags and its own pinned digests, and every step is safe to re-run), so no two of them need to
+  # wait for each other. Per commit, nothing queues and nothing is cancelled; the group is not a no-op: a
+  # release/<part>-<x.y> branch created from the release tag while main's run on that commit is still going starts a
+  # second run on the same commit, which waits for the first and then takes the "already released" path, so the two
+  # never race on tags. Runs for merges that release nothing never enter it.
   release:
     needs: plan
     if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.parts != '[]'
+    concurrency:
+      group: release-${{ github.sha }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

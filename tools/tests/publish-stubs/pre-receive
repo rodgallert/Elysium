@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Hook for the fixture's bare remote: when STUB_RACE_COMMIT is set, another run "wins" the push first, by creating
+# the pushed tag on that commit just before the push is applied, so the push is refused like a tag that exists.
+[ -z "${STUB_RACE_COMMIT:-}" ] && exit 0
+# Git refuses ref updates inside the push's quarantine; this stands in for a push that finished a moment earlier
+unset GIT_QUARANTINE_PATH GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+while read -r _old _new ref; do
+    case "$ref" in refs/tags/*) git update-ref "$ref" "$STUB_RACE_COMMIT" ;; esac
+done
