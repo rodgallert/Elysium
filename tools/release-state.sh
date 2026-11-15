@@ -61,8 +61,10 @@ prove_released() {
     tagged="$(tools/release-tag-commit.sh "$tag")" || fail "can't look up the git tag $tag"
     [[ "$tagged" =~ ^[0-9a-f]{40}$ ]] || fail "can't resolve the git tag $tag to a commit"
 
+    # ls-remote matches patterns by the end of a ref name, so a decoy such as x/refs/heads/main also answers: keep
+    # only refs that are exactly refs/heads/main or start with refs/heads/release/
     tips="$(git ls-remote --heads origin refs/heads/main 'refs/heads/release/*')" || fail "can't list main and the release branches"
-    tips="$(awk '{ print $1 }' <<<"$tips")"
+    tips="$(awk '$2 == "refs/heads/main" || index($2, "refs/heads/release/") == 1 { print $1 }' <<<"$tips")"
     [ -n "$tips" ] || fail "no main or release branch found"
     local missing=() commit
     for commit in "$tagged" $tips; do

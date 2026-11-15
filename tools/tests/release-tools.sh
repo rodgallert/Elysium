@@ -294,6 +294,10 @@ git push -q origin unprotected
 git tag -f -a fake-api-v0.4.0 -m "fake-api 0.4.0" "$elsewhere" >/dev/null
 git push -q -f origin fake-api-v0.4.0
 STUB_REVISION="$elsewhere" STUB_ATTESTED="$elsewhere" state fail "a tag on a commit that isn't on main or a release branch fails"
+# Decoy branches (ls-remote matches by the end of a name) outside the rulesets don't count as main or a release branch
+git push -q origin "$elsewhere:refs/heads/x/refs/heads/main" "$elsewhere:refs/heads/y/refs/heads/release/fake"
+STUB_REVISION="$elsewhere" STUB_ATTESTED="$elsewhere" state fail "a tag on a commit that is only on decoy x/refs/heads/main and y/refs/heads/release/ branches fails"
+git push -q origin ":refs/heads/x/refs/heads/main" ":refs/heads/y/refs/heads/release/fake"
 git push -q origin "$elsewhere:refs/heads/release/fake-api-0.4"
 STUB_REVISION="$elsewhere" STUB_ATTESTED="$elsewhere" state ok "the same tag once its commit is on a release branch: released" released
 

@@ -90,7 +90,7 @@ jobs:
           args=()
           parts='[]'
           if [ "$EVENT" = pull_request ]; then
-            args+=(--base "origin/$BASE_REF")
+            args+=(--base "refs/remotes/origin/$BASE_REF")
             parts="$(tools/release-plan.sh changed HEAD^1 HEAD "$TITLE" | jq -c .parts)"
           fi
           if [ "$parts" != '[]' ] || [ "$RELEASE_INPUT" = true ]; then args+=(--release); fi
