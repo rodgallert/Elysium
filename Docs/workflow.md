@@ -225,7 +225,7 @@ The gate can't `needs` a job of another workflow, so for the Release workflow's 
 
 **What the gate guarantees, and what it doesn't:** it catches honest mistakes (red or unbuilt CI, a forgotten check) and fork PRs. It is only as strong as the review of changes to `.github/workflows/` and `tools/ci-*.sh` (and `tools/tests/ci-tools.sh`): a pull request from a branch of this repository runs its own versions of them, so a PR can change the gate that judges it, and that change is in the reviewed diff. The GitHub Actions source pin does not stop a workflow on any branch that asks for `checks: write` or `statuses: write` and posts a `gate` result, so someone with push access can still forge it. Fine for a single-collaborator repository; revisit it when that changes.
 
-Until the check is added, the rulesets still require no checks, and "Ready to merge" (see Reviews) is only as good as whoever reads the PR's checks.
+Since 2026-11-15 `gate` is required in both rulesets, so a PR can't merge without it; "Ready to merge" (see Reviews) still means the checks were read on the PR's current head.
 
 ### Production
 
