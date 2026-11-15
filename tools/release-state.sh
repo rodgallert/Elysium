@@ -63,7 +63,7 @@ esac
 
 # The proof that a version which looks released came from a real release (see the header)
 prove_released() {
-    local refs tagged tips tip on_branch=no sboms
+    local tagged tips tip on_branch=no sboms
     # (exact ref names only: tools/release-tag-commit.sh)
     tagged="$(tools/release-tag-commit.sh "$tag")" || fail "can't look up the git tag $tag"
     [[ "$tagged" =~ ^[0-9a-f]{40}$ ]] || fail "can't resolve the git tag $tag to a commit"
