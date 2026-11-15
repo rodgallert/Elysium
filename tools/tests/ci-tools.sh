@@ -95,6 +95,8 @@ gate "Markdown-only but dotnet ran" 1 pull_request refs/pull/1/merge "$(needs fa
 gate "a needed job is missing from needs" 1 pull_request refs/pull/1/merge "$(needs true "$APPS" "$IMAGES" \
     changes=success boundaries=success dotnet=success find-frontends=success frontends=success find-images=success \
     publish=skipped)"
+gate "a job nobody told the gate about" 1 pull_request refs/pull/1/merge "$(needs true "$APPS" "$IMAGES" \
+    "${all_ok[@]}" newjob=success)"
 gate "changes gave no verdict" 1 pull_request refs/pull/1/merge "$(needs maybe "$APPS" "$IMAGES" "${all_ok[@]}")"
 
 # --- Markdown-only changes ------------------------------------------------------------------------------------------
@@ -126,6 +128,32 @@ changed "a file that merely contains .md in its name" true "HEAD^1"
 changed "base is not a commit" true "0000000000000000000000000000000000000000"
 changed "base is not a plain revision" true "--output=x"
 changed "nothing changed" true "HEAD"
+git -C "$repo" mv src/app.cs src/app.md && commit rename
+changed "code renamed to .md" true "HEAD^1"
+
+# the release tooling filter in release.yml's plan job: pulled out of the workflow and run on a fixture diff
+filter="$(grep -o "grep -qE '[^']*'" "$root/.github/workflows/release.yml" | sed "s/^grep -qE '//; s/'\$//")"
+[ -n "$filter" ] || { echo "FAIL: release tooling filter not found in release.yml"; exit 1; }
+tooling() { # name, expected (yes/no), base
+    local got=no
+    if (cd "$repo" && git diff --name-only --no-renames "$3" HEAD | grep -qE "$filter"); then got=yes; fi
+    check "release tooling filter: $1" 0 "$([ "$got" = "$2" ] && echo 0 || echo 1)" "got $got"
+}
+mkdir -p "$repo/tools"
+echo r >"$repo/tools/release-publish.sh" && echo o >"$repo/tools/other.sh" && commit tools
+tooling "a release tool added" yes "HEAD^1"
+git -C "$repo" mv tools/release-publish.sh tools/gone.sh && commit move
+tooling "a release tool moved out of the list" yes "HEAD^1"
+echo z >>"$repo/tools/other.sh" && commit other
+tooling "an unrelated tool changed" no "HEAD^1"
+
+# gate.needs lists every job of build.yml (and ci-gate.sh knows each of them)
+jobs_in_workflow="$(awk '/^jobs:/{j=1;next} j && /^  [a-z][a-z-]*:$/{gsub(/[ :]/,"");print}' "$root/.github/workflows/build.yml" | grep -vx gate | sort | tr '\n' ' ')"
+gate_needs="$(awk '/^  gate:/{g=1} g && /needs:/{gsub(/.*\[|\].*|,/," ");print;exit}' "$root/.github/workflows/build.yml" | tr ' ' '\n' | grep . | sort | tr '\n' ' ')"
+known_in_script="$(sed -n 's/^known="\(.*\)"$/\1/p' "$root/tools/ci-gate.sh" | tr ' ' '\n' | sort | tr '\n' ' ')"
+check "gate.needs lists every job of build.yml" 0 "$([ "$jobs_in_workflow" = "$gate_needs" ] && [ -n "$gate_needs" ] && echo 0 || echo 1)" "jobs: $jobs_in_workflow / needs: $gate_needs"
+check "ci-gate.sh knows every job of build.yml" 0 "$([ "$jobs_in_workflow" = "$known_in_script" ] && echo 0 || echo 1)" "jobs: $jobs_in_workflow / script: $known_in_script"
+
 
 # --- waiting for the Release workflow's run -------------------------------------------------------------------------
 sha=0123456789abcdef0123456789abcdef01234567
@@ -145,21 +173,26 @@ release_run() { # name, expected exit code, response files as "n=json"
     check "release run: $name" "$want" "$rc" "$out"
 }
 
-run() { # id, status, conclusion, createdAt
-    printf '[{"databaseId":%s,"status":"%s","conclusion":"%s","createdAt":"%s"}]' "$1" "$2" "$3" "$4"
+run() { # id, status, conclusion
+    printf '[{"databaseId":%s,"status":"%s","conclusion":"%s"}]' "$1" "$2" "$3"
 }
 
-release_run "finished and green" 0 "1=$(run 1 completed success 2026-11-15T10:00:00Z)"
-release_run "finished and red" 1 "1=$(run 1 completed failure 2026-11-15T10:00:00Z)"
-release_run "cancelled" 1 "1=$(run 1 completed cancelled 2026-11-15T10:00:00Z)"
-release_run "starts late, then green" 0 "1=[]" "2=$(run 1 queued '' 2026-11-15T10:00:00Z)" \
-    "3=$(run 1 in_progress '' 2026-11-15T10:00:00Z)" "4=$(run 1 completed success 2026-11-15T10:00:00Z)"
+release_run "finished and green" 0 "1=$(run 1 completed success)"
+release_run "finished and red" 1 "1=$(run 1 completed failure)"
+release_run "cancelled" 1 "1=$(run 1 completed cancelled)"
+release_run "starts late, then green" 0 "1=[]" "2=$(run 1 queued '')" \
+    "3=$(run 1 in_progress '')" "4=$(run 1 completed success)"
 release_run "never starts" 1 "1=[]"
-release_run "never finishes" 1 "1=$(run 1 in_progress '' 2026-11-15T10:00:00Z)"
-release_run "a re-run replaces a failed run" 0 \
-    "1=[{\"databaseId\":1,\"status\":\"completed\",\"conclusion\":\"failure\",\"createdAt\":\"2026-11-15T10:00:00Z\"},{\"databaseId\":2,\"status\":\"completed\",\"conclusion\":\"success\",\"createdAt\":\"2026-11-15T10:05:00Z\"}]"
-release_run "a newer run is red though an older one was green" 1 \
-    "1=[{\"databaseId\":1,\"status\":\"completed\",\"conclusion\":\"success\",\"createdAt\":\"2026-11-15T10:00:00Z\"},{\"databaseId\":2,\"status\":\"completed\",\"conclusion\":\"failure\",\"createdAt\":\"2026-11-15T10:05:00Z\"}]"
+release_run "never finishes" 1 "1=$(run 1 in_progress '')"
+two() { # first run's conclusion, second run's conclusion
+    printf '[{"databaseId":1,"status":"completed","conclusion":"%s"},{"databaseId":2,"status":"completed","conclusion":"%s"}]' "$1" "$2"
+}
+release_run "a re-run (a new attempt of the same run) going, then green" 0 "1=$(run 1 in_progress '')" \
+    "2=$(run 1 completed success)"
+release_run "another PR's green run does not cover this PR's red one" 1 "1=$(two success failure)"
+release_run "a fork's red run on the same commit blocks" 1 "1=$(two failure success)"
+release_run "two green runs on the same commit" 0 "1=$(two success success)"
+release_run "one green run, another still going" 1 "1=$(printf '[{"databaseId":1,"status":"completed","conclusion":"success"},{"databaseId":2,"status":"in_progress","conclusion":""}]')"
 
 out="$("$root/tools/ci-release-run.sh" 'not-a-commit' 2>&1)"
 check "release run: refuses a value that is not a commit" 2 $? "$out"

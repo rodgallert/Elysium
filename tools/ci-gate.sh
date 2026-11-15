@@ -26,6 +26,15 @@ expect() { # job, expected result
     [ "$got" = "$2" ] || problem "$1 was $got, expected $2"
 }
 
+# A job added to the workflow but not to this list (or to gate.needs) would go unchecked: refuse unknown jobs
+known="changes boundaries dotnet release-checks find-frontends frontends find-images publish"
+for job in $(jq -r 'keys[]' <<<"$NEEDS"); do
+    case " $known " in
+        *" $job "*) ;;
+        *) problem "$job is in needs but ci-gate.sh doesn't know it" ;;
+    esac
+done
+
 expect changes success
 code="$(output changes code)"
 case "$code" in

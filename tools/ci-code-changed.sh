@@ -10,7 +10,7 @@ if ! [[ "$base" =~ ^[0-9a-zA-Z][0-9a-zA-Z^~._/-]*$ ]] || ! git rev-parse --verif
     exit 0
 fi
 
-files="$(git diff --name-only "$base" HEAD)"
+files="$(git diff --name-only --no-renames "$base" HEAD)"
 if [ -z "$files" ]; then
     echo true
 elif grep -qv '\.md$' <<<"$files"; then

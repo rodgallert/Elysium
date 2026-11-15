@@ -66,7 +66,7 @@ A known warning that the service's `CLAUDE.md` already lists is not a finding; a
 
 Each failure is a **Must fix** unless noted.
 
-- **Build:** 0 errors. **Tests:** all pass. **Boundary check:** passes. **CI:** every check on the PR is green (a check still running goes under "Not checked"). Docs-only PRs have no build check; say so under "Checked" instead.
+- **Build:** 0 errors. **Tests:** all pass. **Boundary check:** passes. **CI:** every check on the PR is green (a check still running goes under "Not checked"). Docs-only PRs have no build jobs, only the `gate` check (it passes); say so under "Checked" instead.
 - **PR title** is a Conventional Commit, because it becomes the commit title (every merge is a squash): `^(feat|fix|docs|refactor|test|chore|ci|perf|build)(\([a-z0-9.-]+\))?!?: [a-z]`, imperative, no full stop.
 - **Branch name** follows `Docs/workflow.md` for its level. Type in the branch matches the type in the title.
 - **Issue link:** tickets say `Closes #<issue>` for every roadmap task they complete (Should fix if missing). Merges into `main` close them automatically; the reviewer only checks the links are there and point at the right tickets.
