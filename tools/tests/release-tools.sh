@@ -365,7 +365,37 @@ command git -C "$pubremote" tag -d fake-api-v0.4.0 >/dev/null
 fresh
 printf '%s' "$d2" >"$tagfile"
 publish fail "an image tag that already points at another digest fails" "release tags never move"
-expect ok "  (and nothing was moved)" bash -c '[ "$(cat "$0")" = "$1" ] && [ ! -e "$2/log" ]' "$tagfile" "$d2" "$STUB_TAGS"
+expect ok "  (before the git tag is pushed, and nothing was moved)" \
+    bash -c '[ "$(cat "$0")" = "$1" ] && [ ! -e "$2/log" ] && [ -z "$(git -C "$3" tag -l fake-api-v0.4.0)" ]' "$tagfile" "$d2" "$STUB_TAGS" "$pubremote"
+
+# Release notes that can't be built fail before the git tag is pushed, so an honest failure doesn't use the version up
+fresh
+mv "$pub/Fake/api/CHANGELOG.md" "$work/CHANGELOG.md"
+publish fail "a missing changelog section fails" "has no section for 0.4.0"
+expect ok "  (before the git tag is pushed)" bash -c '[ ! -e "$0/log" ] && [ -z "$(git -C "$1" tag -l fake-api-v0.4.0)" ]' "$STUB_TAGS" "$pubremote"
+mv "$work/CHANGELOG.md" "$pub/Fake/api/CHANGELOG.md"
+
+# A decoy tag: ls-remote matches refs by the end of their name, so x/refs/tags/<tag> answers a lookup of <tag>.
+# Only the exact name counts.
+decoy="x/refs/tags/fake-api-v0.4.0"
+command git -C "$pubremote" -c user.name=t -c user.email=t@t tag -a "$decoy" -m decoy "$pubhead"
+fresh
+command git -C "$pubremote" tag fake-api-v0.4.0 "$elsewhere"
+publish fail "a real tag on another commit and a decoy on the merge commit fails" "not on this commit; no image was tagged"
+expect ok "  (no image tagged, no Release; the decoy is no claim)" bash -c '[ ! -e "$0/log" ]' "$STUB_TAGS"
+command git -C "$pubremote" tag -d fake-api-v0.4.0 >/dev/null
+fresh
+publish ok "a decoy and no real tag: the decoy is ignored and the run claims the real tag"
+expect ok "  (the real tag is on the merge commit)" \
+    bash -c '[ "$(git -C "$0" rev-parse "refs/tags/fake-api-v0.4.0^{commit}")" = "$1" ]' "$pubremote" "$pubhead"
+command git -C "$pubremote" tag -d "$decoy" >/dev/null
+command git -C "$pubremote" tag -d fake-api-v0.4.0 >/dev/null
+expect ok "release-tag-commit.sh ignores a decoy named x/refs/tags/<tag>" bash -c '
+    git -C "$0" tag fake-api-v0.4.0 "$1" && git -C "$0" tag "x/refs/tags/fake-api-v0.4.0" "$2" &&
+    [ "$(cd "$3" && ./tools/release-tag-commit.sh fake-api-v0.4.0)" = "$1" ] &&
+    git -C "$0" tag -d fake-api-v0.4.0 >/dev/null && [ -z "$(cd "$3" && ./tools/release-tag-commit.sh fake-api-v0.4.0)" ]' \
+    "$pubremote" "$elsewhere" "$pubhead" "$pub"
+command git -C "$pubremote" tag -d "x/refs/tags/fake-api-v0.4.0" >/dev/null
 
 git remote set-url origin "$work/nowhere.git"
 state fail "a git remote that can't be read fails"

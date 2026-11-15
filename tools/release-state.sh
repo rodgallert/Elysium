@@ -64,10 +64,8 @@ esac
 # The proof that a version which looks released came from a real release (see the header)
 prove_released() {
     local refs tagged tips tip on_branch=no sboms
-    refs="$(git ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}")" || fail "can't look up the git tag $tag"
-    # An annotated tag's commit is its peeled (^{}) line; a lightweight tag points at the commit itself
-    tagged="$(awk -v t="refs/tags/$tag^{}" '$2 == t { print $1 }' <<<"$refs")"
-    [ -n "$tagged" ] || tagged="$(awk -v t="refs/tags/$tag" '$2 == t { print $1 }' <<<"$refs")"
+    # (exact ref names only: tools/release-tag-commit.sh)
+    tagged="$(tools/release-tag-commit.sh "$tag")" || fail "can't look up the git tag $tag"
     [[ "$tagged" =~ ^[0-9a-f]{40}$ ]] || fail "can't resolve the git tag $tag to a commit"
 
     tips="$(git ls-remote --heads origin refs/heads/main 'refs/heads/release/*')" || fail "can't list main and the release branches"
