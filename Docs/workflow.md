@@ -173,7 +173,9 @@ A part is released when its milestone's tickets are on `main` and its phase chec
    - tags each prepared image `<x.y.z>` (the same digest; nothing is rebuilt);
    - creates the annotated git tag `<part>-v<x.y.z>` on the merge commit and a GitHub Release (not marked "latest") with the changelog section and the SBOMs.
 
-   Then close the milestone. If the job fails, tell the PO what failed; never create the tag by hand.
+   Then close the milestone. If the job fails, tell the PO what failed; never create the tag by hand. Check that the Release workflow's `push` run on the merge commit concluded `success`: a `cancelled` run isn't shown as a failure but released nothing.
+
+   The `release` job's concurrency group is named after the merge commit (`release-<sha>`), not the branch. GitHub keeps only one pending run per group and cancels the older one when a newer run queues, so a per-branch group would drop the middle one of three quick release merges without any failure. With a group per commit nothing queues and nothing is cancelled: releases are independent, since each has its own tags and pinned digests and every step is safe to re-run, so the group only keeps a re-run of the same merge from overlapping its first run. Merges that release nothing never enter a group.
 
 Several parts can be released in one PR when they must ship together (a coordinated breaking change); each still gets its own version, changelog section and tag. CI finds them as the parts whose version file the merge commit changed, and both signals must agree: a changed version outside a `chore(release):` commit, or a `chore(release):` commit that changes no version, fails the release workflow.
 
