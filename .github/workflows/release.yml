@@ -293,8 +293,10 @@ jobs:
   # run wait: GitHub cancels a pending run when a newer one queues behind it, so with three quick release merges
   # the middle release would be dropped, and a cancelled run doesn't show as a failure. Releases are independent
   # (each has its own tags and its own pinned digests, and every step is safe to re-run), so no two of them need to
-  # wait for each other. Per commit, nothing queues and nothing is cancelled; the group only keeps a re-run of the
-  # same merge from overlapping its first run. Runs for merges that release nothing never enter it.
+  # wait for each other. Per commit, nothing queues and nothing is cancelled; the group is not a no-op: a
+  # release/<part>-<x.y> branch created from the release tag while main's run on that commit is still going starts a
+  # second run on the same commit, which waits for the first and then takes the "already released" path, so the two
+  # never race on tags. Runs for merges that release nothing never enter it.
   release:
     needs: plan
     if: needs.plan.outputs.mode == 'release' && needs.plan.outputs.parts != '[]'
