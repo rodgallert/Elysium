@@ -290,6 +290,83 @@ STUB_REVISION="$elsewhere" STUB_ATTESTED="$elsewhere" state fail "a tag on a com
 git push -q origin "$elsewhere:refs/heads/release/fake-api-0.4"
 STUB_REVISION="$elsewhere" STUB_ATTESTED="$elsewhere" state ok "the same tag once its commit is on a release branch: released" released
 
+# shellcheck disable=SC2016 # the inner shells expand their own positional parameters
+echo "== release-publish.sh (stubbed registry, Releases and source check; its own bare remote)"
+# Claiming the version: the git tag is pushed first, and a run that doesn't win it never tags an image. The remote
+# has a pre-receive hook (tools/tests/publish-stubs/pre-receive) that lets a "racing" run win the push first.
+pubremote="$work/publish-origin.git"
+git init -q --bare -b main "$pubremote"
+git push -q "$pubremote" "main:refs/heads/main" "$elsewhere:refs/heads/other"
+cp "$tools/tests/publish-stubs/pre-receive" "$pubremote/hooks/pre-receive"
+pub="$work/publish"
+command git clone -q -b main "$pubremote" "$pub"
+if [ "$(command git -C "$pub" rev-parse --absolute-git-dir 2>/dev/null)" != "$(cd "$pub" && pwd -P)/.git" ]; then
+    echo "Refusing to run: the publish fixture doesn't resolve to $pub/.git" >&2
+    exit 1
+fi
+cp "$tools/tests/publish-stubs/release-check-source.sh" "$pub/tools/release-check-source.sh"
+printf '# Changelog\n\n## 0.4.0\n\n- Released\n\n### Breaking changes\n\nNone\n' >"$pub/Fake/api/CHANGELOG.md"
+pubhead="$(command git -C "$pub" rev-parse HEAD)"
+export STUB_TAGS="$work/registry"
+image="ghcr.io/rodgallert/elysium-fake-api"
+tagfile="$STUB_TAGS/${image//\//_}:0.4.0"
+publish() { # <ok|fail> <description> [<text a failure must print>]: one release run for fake-api 0.4.0 in the clone
+    local run=(env PATH="$tools/tests/publish-stubs:$PATH" GITHUB_REPOSITORY=rodgallert/Elysium GH_TOKEN=x \
+        GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
+        "$pub/tools/release-publish.sh" fake-api 0.4.0)
+    if [ -n "${3:-}" ]; then
+        # shellcheck disable=SC2016 # expanded by the inner shell
+        [ "$1" = fail ] || { echo "publish: a message is only for a failure" >&2; exit 1; }
+        expect ok "$2" bash -c 'out="$("$@" 2>&1)"; status=$?; echo "$out"; [ $status -ne 0 ] && grep -qF -- "$0" <<<"$out"' "$3" "${run[@]}"
+    else
+        expect "$1" "$2" "${run[@]}"
+    fi
+}
+fresh() { rm -rf "$STUB_TAGS"; mkdir -p "$STUB_TAGS"; command git -C "$pub" tag -d fake-api-v0.4.0 >/dev/null 2>&1 || true; }
+remote_tag() { command git -C "$pubremote" rev-parse -q --verify "refs/tags/fake-api-v0.4.0^{commit}" || true; }
+tagged_images() { grep -c '^tag ' "$STUB_TAGS/log" 2>/dev/null || true; }
+
+fresh
+publish ok "a release run claims the tag, tags the image and creates the Release"
+expect ok "  (the tag is on the merge commit, the image tagged with the pinned digest, the Release created)" \
+    bash -c '[ "$(git -C "$0" rev-parse "refs/tags/fake-api-v0.4.0^{commit}")" = "$1" ] && [ "$(cat "$2")" = "$3" ] && [ -f "$4/release-fake-api-v0.4.0" ]' \
+    "$pubremote" "$pubhead" "$tagfile" "$d1" "$STUB_TAGS"
+# A run that died after the tag and the images, before the Release: its re-run finds the tag on this commit
+rm "$STUB_TAGS/release-fake-api-v0.4.0"
+publish ok "re-running the winner is idempotent: the tag is on this commit, so it carries on"
+expect ok "  (the image isn't tagged a second time, and the Release is there)" \
+    bash -c '[ "$(grep -c "^tag " "$0/log")" = 1 ] && [ -f "$0/release-fake-api-v0.4.0" ]' "$STUB_TAGS"
+
+# A pre-existing tag on another commit: refused before any image tag
+fresh
+command git -C "$pubremote" tag -d fake-api-v0.4.0 >/dev/null
+command git -C "$pubremote" -c user.name=t -c user.email=t@t tag -a fake-api-v0.4.0 -m other "$elsewhere"
+publish fail "a tag already on another commit fails" "not on this commit; no image was tagged"
+expect ok "  (no image was tagged and no Release created)" bash -c '[ ! -e "$0/log" ]' "$STUB_TAGS"
+command git -C "$pubremote" tag -d fake-api-v0.4.0 >/dev/null
+command git -C "$pubremote" tag fake-api-v0.4.0 "$elsewhere"
+fresh
+publish fail "a lightweight tag on another commit fails too" "not on this commit; no image was tagged"
+expect ok "  (no image was tagged)" bash -c '[ ! -e "$0/log" ]' "$STUB_TAGS"
+
+# Two runs for one version, on different commits: the loser's push is rejected because the winner got there first
+command git -C "$pubremote" tag -d fake-api-v0.4.0 >/dev/null
+fresh
+STUB_RACE_COMMIT="$elsewhere" publish fail "a run that loses the tag push fails" "not on this commit; no image was tagged"
+expect ok "  (it tagged no image and created no Release; the winner's tag stands)" \
+    bash -c '[ ! -e "$0/log" ] && [ "$(git -C "$1" rev-parse "refs/tags/fake-api-v0.4.0^{commit}")" = "$2" ]' "$STUB_TAGS" "$pubremote" "$elsewhere"
+# Two runs of the same merge: the loser sees the tag on its own commit and carries on, with the same digests
+command git -C "$pubremote" tag -d fake-api-v0.4.0 >/dev/null
+fresh
+STUB_RACE_COMMIT="$pubhead" publish ok "a run that loses the push to another run of the same commit carries on"
+expect ok "  (the image is tagged with the pinned digest)" bash -c '[ "$(cat "$0")" = "$1" ]' "$tagfile" "$d1"
+# An image version tag that points elsewhere still fails, after the claim
+command git -C "$pubremote" tag -d fake-api-v0.4.0 >/dev/null
+fresh
+printf '%s' "$d2" >"$tagfile"
+publish fail "an image tag that already points at another digest fails" "release tags never move"
+expect ok "  (and nothing was moved)" bash -c '[ "$(cat "$0")" = "$1" ] && [ ! -e "$2/log" ]' "$tagfile" "$d2" "$STUB_TAGS"
+
 git remote set-url origin "$work/nowhere.git"
 state fail "a git remote that can't be read fails"
 

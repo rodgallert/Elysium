@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Test stub for the release-publish.sh cases in tools/tests/release-tools.sh: GitHub Releases kept as files in
+# STUB_TAGS ("release-<tag>"). Refuses to run outside the tests.
+[ "${RELEASE_TOOLS_TEST:-}" = 1 ] || { echo "tools/tests/publish-stubs/gh is a test stub" >&2; exit 99; }
+[ -d "${STUB_TAGS:-}" ] || { echo "STUB_TAGS is not a directory" >&2; exit 99; }
+case "$1 $2" in
+    "release view") [ -f "$STUB_TAGS/release-$3" ] ;;
+    "release create") : >"$STUB_TAGS/release-$3"; echo "release $3" >>"$STUB_TAGS/log" ;;
+    *) echo "stub gh: unexpected command: $*" >&2; exit 99 ;;
+esac
