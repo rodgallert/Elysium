@@ -55,7 +55,7 @@ released=true
 for image in "${!digests[@]}"; do
     [ "$(remote_digest "$registry/$owner/$image:$version")" = "${digests[$image]}" ] || released=false
 done
-if $released && git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null && gh release view "$tag" -R "$repository" >/dev/null 2>&1; then
+if $released && [ -n "$(tools/release-tag-commit.sh "$tag")" ] && gh release view "$tag" -R "$repository" >/dev/null 2>&1; then
     state="$(tools/release-state.sh "$part" "$version")" || fail "looks released, but the release can't be proven"
     [ "$state" = released ] || fail "looks released, but tools/release-state.sh says $state"
     echo "$tag is already released; nothing to do"

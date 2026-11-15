@@ -248,6 +248,12 @@ built="$(git rev-parse HEAD)"
 
 export STUB_REVISION="$built" STUB_ATTESTED="$built"
 STUB_HTTP=404 STUB_REGISTRY=missing state ok "nothing released yet: unreleased (the source check runs)" unreleased
+# A decoy tag (ls-remote matches by the end of a name) is no tag of the version
+git tag -a "x/refs/tags/fake-api-v0.4.0" -m decoy "$built"
+git push -q origin "refs/tags/x/refs/tags/fake-api-v0.4.0"
+STUB_HTTP=404 STUB_REGISTRY=missing state ok "a decoy tag x/refs/tags/<tag> doesn't make an unreleased version look partly released" unreleased
+git push -q origin ":refs/tags/x/refs/tags/fake-api-v0.4.0"
+git tag -d "x/refs/tags/fake-api-v0.4.0" >/dev/null
 STUB_HTTP=500 STUB_REGISTRY=missing state fail "a Releases API error fails, never read as unreleased"
 STUB_HTTP=000 STUB_REGISTRY=missing state fail "no answer from the Releases API fails"
 STUB_HTTP=404 STUB_REGISTRY=error state fail "a registry error fails, never read as not tagged"

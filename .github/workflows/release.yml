@@ -207,7 +207,7 @@ jobs:
               echo "### When the release PR merges"
               echo
               echo '```'
-              if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              if [ -n "$(tools/release-tag-commit.sh "$tag")" ]; then
                 echo "# tag $tag already exists: this version can't be released again"
               fi
               for pair in "${pairs[@]}"; do

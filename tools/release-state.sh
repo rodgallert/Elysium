@@ -39,16 +39,9 @@ fail() { echo "$part $version: $*" >&2; exit 1; }
 info="$(tools/release-parts.sh | jq -c --arg p "$part" '.[] | select(.part == $p)')"
 [ -n "$info" ] || fail "no such release part"
 
-# Git tag: ls-remote exits 2 when nothing matches, anything else non-zero is an error
-set +e
-git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1
-code=$?
-set -e
-case "$code" in
-    0) git_tag=yes ;;
-    2) git_tag=no ;;
-    *) fail "can't look up the git tag $tag (git ls-remote exit $code)" ;;
-esac
+# Git tag, by its exact name (tools/release-tag-commit.sh; ls-remote alone also matches x/refs/tags/<tag>)
+tag_commit="$(tools/release-tag-commit.sh "$tag")" || fail "can't look up the git tag $tag"
+if [ -n "$tag_commit" ]; then git_tag=yes; else git_tag=no; fi
 
 # GitHub Release: 200 exists, 404 doesn't, anything else (including no answer) is an error
 auth=()
