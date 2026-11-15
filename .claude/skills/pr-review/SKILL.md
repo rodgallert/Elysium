@@ -102,6 +102,7 @@ Read every changed line and enough of the surrounding code to understand it.
 - No passwords, tokens, codes or personal data in logs, exceptions, URLs or analytics; no user enumeration through messages, status codes or timing.
 - Secrets come from configuration, never code; cryptography uses the platform's vetted APIs, never home-made schemes.
 - Frontends never store tokens in browser storage; cookies are `Secure`, `HttpOnly`, `SameSite`.
+- Git refs are matched by their full name: `git ls-remote` patterns match the end of a name (`refs/tags/<t>` also matches `x/refs/tags/<t>`), and short names given to `rev-parse`/`show`/`describe`/`--base` resolve tags before remote branches. Any lookup that decides what is released, protected or compared filters output by the exact refname (or passes `refs/heads/…`, `refs/remotes/…`, `refs/tags/…`, or a checked 40-hex commit), and has a fixture with a decoy tag or branch.
 
 **Messaging and CQRS** (`Docs/platform-design.md`, section 10)
 - Commands and queries are separate handlers; queries change nothing.

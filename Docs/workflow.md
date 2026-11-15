@@ -98,7 +98,7 @@ Every merge is a GitHub pull request, and every merge is a **squash**: one commi
 - **The PR title follows Conventional Commits**: a ticket's change (`feat(masquerade): sign in with email and password`), a release (`chore(release): masquerade 0.1.0`), a hotfix (`fix(masquerade): …`).
 - **The PR description** lists what changed and the review results (see Reviews). It becomes the commit body, so keep it current after every fix commit.
 - After a merge on GitHub, update the local `main` (`git pull`) before starting the next piece of work from it.
-- If `main` moved on and a PR conflicts, merge `origin/main` into the ticket branch (a normal merge; no rebase, no force-push).
+- If `main` moved on, merge `origin/main` into the ticket branch ("Update branch" or a normal merge; no rebase, no force-push): the rulesets require branches to be up to date, so this is needed for every open PR when the base moves, not only on conflicts (see Required check).
 
 ## Phases
 
@@ -221,11 +221,11 @@ The gate can't `needs` a job of another workflow, so for the Release workflow's 
 
 **Repository setting (the PO sets it once, and again if the check is ever renamed):** Settings → Rules → Rulesets, in both "Protect main" and "Release branches":
 - turn on **Require status checks to pass**, then **Add checks** and pick `gate` with source **GitHub Actions** (it shows in the list after the first run on a PR, so add it after the PR that introduces it has been through CI). Keep the source: it stops a plain commit status named `gate` posted with a personal token. After saving, confirm with `gh api repos/rodgallert/Elysium/rulesets/<id>`: the rule must read `{"context": "gate", "integration_id": 15368}`; a check added as "any source" has no `integration_id`;
-- leave **Require branches to be up to date before merging** off (a merge of `origin/main` into the branch is only asked for when there's a conflict, see Branches), and **Do not require status checks on creation** off.
+- turn **Require branches to be up to date before merging** on (the PO's decision, 2026-11-15), so a PR can't merge on a green `gate` from a run against an older base. The cost: whenever the base moves, each open PR needs "Update branch" (a merge of the base into the branch, a merge commit, consistent with the no-rebase rule in Branches) and a CI re-run before it can merge. Keep **Do not require status checks on creation** off.
 
 **What the gate guarantees, and what it doesn't:** it catches honest mistakes (red or unbuilt CI, a forgotten check) and fork PRs. It is only as strong as the review of changes to `.github/workflows/` and `tools/ci-*.sh` (and `tools/tests/ci-tools.sh`): a pull request from a branch of this repository runs its own versions of them, so a PR can change the gate that judges it, and that change is in the reviewed diff. The GitHub Actions source pin does not stop a workflow on any branch that asks for `checks: write` or `statuses: write` and posts a `gate` result, so someone with push access can still forge it. Fine for a single-collaborator repository; revisit it when that changes.
 
-Until the check is added, the rulesets still require no checks, and "Ready to merge" (see Reviews) is only as good as whoever reads the PR's checks.
+Since 2026-11-15 `gate` is required in both rulesets, so a PR can't merge without it; "Ready to merge" (see Reviews) still means the checks were read on the PR's current head.
 
 ### Production
 
