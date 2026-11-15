@@ -33,7 +33,7 @@ A **phase checkpoint** has no PR: when the phase's last ticket is done, review e
 
 Anything else (wrong base, a ticket into a release branch, `main` or a release branch as the head) is a **Must fix**.
 
-A PR is **docs-only** when every changed file is Markdown (`.md`), wherever it lives. Anything else under `.claude/` (settings, hooks, scripts) is code. Docs-only PRs skip the worktree build (section 2), the build and boundary lines of section 3, and the code review (section 5), and get a read-through instead. The build workflow doesn't run on Markdown-only changes, so a docs-only PR has no build check: don't wait for one and don't list its absence as a finding. Every other check still applies: title, branch, issue link, roadmap boxes and repo hygiene.
+A PR is **docs-only** when every changed file is Markdown (`.md`), wherever it lives. Anything else under `.claude/` (settings, hooks, scripts) is code. Docs-only PRs skip the worktree build (section 2), the build and boundary lines of section 3, and the code review (section 5), and get a read-through instead. The build jobs don't run on Markdown-only changes, so a docs-only PR has no build to wait for (its `gate` check still reports and passes): don't list the missing build jobs as a finding. Every other check still applies: title, branch, issue link, roadmap boxes and repo hygiene.
 
 Read the rules **from the PR's own head branch**, since PRs can change them: `CLAUDE.md`, `ROADMAP.md`, `Docs/workflow.md`, `Docs/platform-design.md`, and the `CLAUDE.md` and decision log of every service the PR touches. If the PR depends on a rule that only exists on another unmerged branch, that's a finding (merge order), not something to assume.
 
