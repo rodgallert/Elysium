@@ -41,7 +41,7 @@ Each listed case gets a test, and the PR maps every criterion and every listed c
 For an HTTP API or message change: the OpenAPI document or message schema (path or link), merged before the tests and handlers, and the contract tests that check against it. "None." for other tickets.
 
 ## Test plan
-One row per criterion; the tests cite the ids above (xUnit: the method name or `[Trait("Spec", "#64-AC2.1")]`, a `[Theory]` row or `DisplayName` per case; shell tests: the function name or a comment line; frontend tests: the `describe`/`it` title).
+One row per criterion; the tests cite the ids above (xUnit: the method name or `[Trait("Spec", "#<issue>-AC2.1")]`, a `[Theory]` row or `DisplayName` per case; shell tests: the function name or a comment line; frontend tests: the `describe`/`it` title).
 
 | Criterion | Level (unit, integration, contract, smoke or lint) | Needs (real containers, movable clock, fixtures, fault injection and its tool) |
 |---|---|---|
@@ -56,4 +56,4 @@ Numbered steps on the running stack and what to expect (exact status code or scr
 What this ticket deliberately doesn't do, and where that work is tracked (issue or roadmap task).
 
 ## Spec approval
-The PO approves this spec; an `Approved: <link to the approval comment>` line is added here when they do. Any edit to this body after approval needs approval again, and every change to the criteria is also recorded as a `Spec change:` comment.
+The PO approves this spec; an `Approved: <link to the approval comment>` line is added here when they do. The `Epic:`, `Approved:`, `Branch:` and `PR:` lines are bookkeeping; an edit to any section from Goal to Out of scope after approval needs approval again, and every change to the criteria is also recorded as a `Spec change:` comment.
