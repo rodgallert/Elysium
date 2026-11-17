@@ -5,7 +5,7 @@ description: Keep Elysium's GitHub issues and project board in step with the wor
 
 # Elysium ticket flow
 
-Every piece of roadmap work has a GitHub issue: a **ticket** (one roadmap task), grouped under an **epic** (one phase), inside a **GitHub milestone** (one release of one release part, e.g. "Masquerade v0.1"; see `Docs/workflow.md`, "Issues, epics and milestones"). The project board **"Elysium"** shows where each one is. Whoever does the work follows these steps so the issue and the board always match reality. The branch and review rules are in `Docs/workflow.md`; this skill only adds the issue and board side.
+Every piece of roadmap work has a GitHub issue: a **ticket** (one roadmap task), grouped under an **epic** (a roadmap phase or a standing epic; see `Docs/workflow.md`, "Issues, epics and milestones"), and committed to a **sprint** (see "Sprints" there) once planned, inside a **GitHub milestone** (one release of one release part, e.g. "Masquerade v0.1"; see `Docs/workflow.md`, "Issues, epics and milestones"). The project board **"Elysium"** shows where each one is. Whoever does the work follows these steps so the issue and the board always match reality. The branch and review rules are in `Docs/workflow.md`; this skill only adds the issue and board side.
 
 **gh account:** the repo is `rodgallert/Elysium`, but gh's active account belongs to another project and must not be switched. Start every shell command that runs `gh` for this repo with `export GH_TOKEN=$(gh auth token --user rodgallert);` (the board scripts do this themselves). If that fails, gh has no login for rodgallert: stop and ask the PO to run `gh auth login --skip-ssh-key -s project`.
 
@@ -50,7 +50,9 @@ File every ticket (not epics or releases, which are filed by hand) from the issu
 2. `tools/board.sh <n> "Done"`.
 3. Update the local `main` (`git switch main && git pull --ff-only`) and delete the merged ticket branch (`git branch -D <branch>`; `-D`, because a squash merge isn't an ancestor).
 4. Pick the next ticket of the phase and move it to **Ready**, unless the PO named another one.
-5. If every sub-issue of the phase's epic is now closed, the phase is ready for its checkpoint: go to `checkpoint`.
+5. If the ticket's epic is a phase epic and every sub-issue of it is now closed, the phase is ready for its checkpoint: go to `checkpoint`.
+
+(Standing epics have no checkpoint: they close only when the PO closes them.)
 
 ### `start-phase <epic>`
 A phase has no branch. `tools/board.sh <epic> "In progress"`, and move the phase's first tickets to **Ready**.
@@ -59,6 +61,20 @@ A phase has no branch. `tools/board.sh <epic> "In progress"`, and move the phase
 1. Review the phase as a whole: everything that changed in `main` since the previous `phase-*-done` tag (`git log phase-<n-1>-done..origin/main`), by someone other than the engineers who wrote it, against the phase's roadmap section, including a security and performance look. Findings become `fix/` tickets.
 2. Ask the PO to check the phase's **Done when** on a running stack, with exact steps (commands, requests, screens) and what to expect, on a named `main` commit (give its hash: `main` keeps moving). Move the epic to **In review** meanwhile.
 3. When both pass: tag **that checked commit** (`git tag -a phase-<n>-done -m "Phase <n>: <name>" <checked-commit> && git push origin phase-<n>-done`), close the epic with a comment naming the tag, and `tools/board.sh <epic> "Done"`.
+
+### `start-sprint <sprint issue>`: the PO gave the go for a planned sprint
+1. File the sprint issue by hand (label `sprint`, like epics) with the goal, commitment list, stretch list, soft time box and an empty outcome, then `tools/board.sh <sprint issue> "In progress"`.
+2. Set the **Sprint** field on every planned ticket, and add the `stretch` label to the stretch tickets (`gh issue edit <n> -R rodgallert/Elysium --add-label stretch`). Look up the board number with `gh project list --owner rodgallert` (the "Elysium" board) and the ids with `gh project field-list <number> --owner rodgallert --format json` (field and option ids) and `gh project item-list <number> --owner rodgallert --format json` (item ids), then: `gh project item-edit --id <item id> --field-id <Sprint field id> --project-id <project id> --single-select-option-id <option id>`. A ticket filed without a Sprint value is in no sprint and shows in neither sprint view.
+3. If the sprint's option isn't in the Sprint field yet, add it first: `tools/board-field.sh save Sprint <file>` before the change, `tools/board-field.sh check Sprint <file>` after it, and put back any value it reports, so existing values aren't lost. Then edit the filter of the **Current sprint** and **Sprint board** views to the new value (`sprint:"<name>"`).
+4. Move the first committed tickets to **Ready** (a ticket only moves once its spec is approved).
+
+### `close-sprint <sprint issue>`: the sprint review
+1. Ask the PO for the sprint review: the manual check of the sprint's goal, with exact steps and what to expect. Only the PO closes a sprint.
+2. For each committed ticket not done, the PO decides: carry it over (set its Sprint field to the next sprint's option with the `item-edit` command above, and record it on the sprint issue) or send it back to Backlog. For each open stretch ticket, the PO decides: next sprint or Backlog (a ticket sent to Backlog has its Sprint value cleared and loses the `stretch` label when it's no longer stretch).
+3. Write the outcome on the sprint issue (goal met or not, done, carried over, moved to Backlog, scope changes), close it with `gh issue close <n> -R rodgallert/Elysium --reason completed`, and `tools/board.sh <sprint issue> "Done"`.
+4. Point the two views at the next sprint (step 3 of `start-sprint`) when it starts, not before.
+
+Unplanned work during a sprint (a hotfix, a bug found in a review) gets the current sprint's Sprint value only with the PO's OK, recorded on the sprint issue; otherwise it goes to Backlog.
 
 ### `release <part> <x.y.z>`: release one release part
 A release part is a service, or one of the parts it declares (`Docs/workflow.md`, "Versions and release parts").
