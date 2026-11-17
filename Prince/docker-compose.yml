@@ -1,4 +1,31 @@
 services:
+  env-check:
+    # Validates the .env values that would otherwise fail quietly (a short Silo password, a Jobs admin password
+    # that breaks ASP.NET Identity's policy) and prints which one is wrong and why, never the value. Runs once;
+    # the services using those values wait for it. The script is a file so it can be tested without Docker.
+    image: alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
+    command: ["/bin/sh", "/env-check.sh"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_DB: ${POSTGRES_DB:-}
+      REVERSE_PROXY_PORT: ${REVERSE_PROXY_PORT:-}
+      JOBS_ADMIN_EMAIL: ${JOBS_ADMIN_EMAIL:-}
+      JOBS_ADMIN_PASSWORD: ${JOBS_ADMIN_PASSWORD:-}
+      FILE_STORAGE_ROOT_USER: ${FILE_STORAGE_ROOT_USER:-}
+      FILE_STORAGE_ROOT_PASSWORD: ${FILE_STORAGE_ROOT_PASSWORD:-}
+      FILE_STORAGE_BUCKET: ${FILE_STORAGE_BUCKET:-}
+    volumes:
+      - ./env-check.sh:/env-check.sh:ro
+    network_mode: none
+    read_only: true
+    user: "65534:65534"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
   postgres:
     image: postgres:17-alpine
     environment:
@@ -9,6 +36,9 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - prince-pgdata:/var/lib/postgresql/data
+    depends_on:
+      env-check:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -59,6 +89,8 @@ services:
       JobsAdmin__Email: ${JOBS_ADMIN_EMAIL}
       JobsAdmin__Password: ${JOBS_ADMIN_PASSWORD}
     depends_on:
+      env-check:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     healthcheck:
@@ -80,6 +112,9 @@ services:
       - "127.0.0.1:9001:9001"
     volumes:
       - prince-filestorage-data:/data
+    depends_on:
+      env-check:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 5s
@@ -95,6 +130,8 @@ services:
       mcli mb --ignore-existing local/${FILE_STORAGE_BUCKET}
       "
     depends_on:
+      env-check:
+        condition: service_completed_successfully
       file-storage:
         condition: service_healthy
 
