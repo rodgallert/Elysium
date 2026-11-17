@@ -134,26 +134,28 @@ A sprint is a goal-based commitment of tickets, separate from epics: it can take
 
 - **Planning.** A planning meeting sets the sprint's **goal**, its **commitment list** (what the sprint promises) and its **stretch list** (what is done only if the commitment finishes early), and names each ticket's edge cases before the ticket is filed (see "Specs and tests"). It also notes a **soft time box**. The sprint starts on the PO's go, and only then.
 - **Sprint issue.** Each sprint has an issue (label `sprint`, filed by hand like epics) holding its goal, commitment, stretch and outcome. It is where the goal, every scope change and the outcome can be read later.
-- **Board.** A ticket is in at most one sprint, shown by the board's **Sprint** field (a single-select field with one option per sprint; the sprint is goal-based, so it isn't an Iteration field). Stretch tickets also carry the `stretch` label. A ticket with no Sprint value is in no sprint and shows in neither sprint view. Two views show the current sprint: **Current sprint** (a table) and **Sprint board** (a kanban board grouped by Status). Both are filtered on the current sprint's value (`sprint:"Sprint 1"`). Only one sprint is current at a time.
+- **Board.** A ticket is in at most one sprint, shown by the board's **Sprint** field (a single-select field with one option per sprint; the sprint is goal-based, so it isn't an Iteration field). Stretch tickets also carry the `stretch` label. A ticket with no Sprint value is in no sprint and shows in neither sprint view. Two views show the current sprint: **Current sprint** (a table) and **Sprint board** (a kanban board grouped by Status). Both are filtered on the current sprint's value (`sprint:"Sprint 1"`). Only one sprint is current at a time. Both views sort by the board's **Priority** field (P0 highest to P3).
+- **Priority.** Every sprint ticket has a Priority set at planning, and work takes the highest-priority **Ready** ticket first.
 - **Next sprint.** To point the views at the next sprint, add its option to the Sprint field (follow the save/check procedure in the `ticket-flow` skill, so existing values aren't lost), then edit each view's filter to the new value. Do this when the next sprint starts.
 - **Statuses within a sprint.** The board's Status column means:
 
   | Status | In a sprint |
   |---|---|
   | Backlog | Not in the current sprint |
-  | Ready | In the current sprint, work not started (every committed and stretch ticket is moved here when the sprint starts) |
+  | Ready | In the current sprint, work not started (every committed and stretch ticket not yet started is moved here when the sprint starts) |
   | In progress | Active work |
   | In review | Finished, under review |
   | Ready to Merge | Approved, ready to merge |
   | Done | Merged |
 
-  Only tickets whose specs are approved are committed. A sprint ticket that fails the spec gate when it starts stays in Ready with a comment saying what is missing (re-approval needed), so it isn't dropped from the sprint.
+  Only tickets with approved specs are committed. A sprint ticket that fails the spec gate when it starts stays in Ready with a comment saying what is missing (re-approval needed), so it isn't dropped from the sprint.
 - **Time box.** Passing the soft time box triggers a check-in with the PO, never an automatic close.
 - **Unplanned work.** Work that appears during a sprint (a hotfix, a bug found in a review) joins the current sprint only with the PO's OK, recorded on the sprint issue; otherwise it goes to Backlog.
 - **Permissions.** Only the PO starts a sprint (the go), changes its commitment and closes it; the bookkeeping records each change on the sprint issue.
 - **Closing.** The sprint closes at a **sprint review**: the PO's manual check of the sprint's goal, with every committed ticket done or carried over by the PO's decision. The outcome is written on the sprint issue, which is then closed.
-  - A committed ticket that isn't done is carried over only by the PO's decision: its Sprint value changes to the next sprint and the sprint issue records it.
-  - If the commitment is done while stretch tickets are still open, the sprint closes, and each open stretch ticket goes to the next sprint or back to Backlog, by the PO's decision. A ticket returned to Backlog has its Sprint value cleared and loses the `stretch` label.
+  - A committed ticket that isn't done is carried over only by the PO's decision: its Sprint value changes to the next sprint, it keeps its Status, its Priority is raised one level at the next planning (P0 stays P0) unless the PO sets otherwise, and the sprint issue records it.
+  - If the commitment is done while stretch tickets are still open, the sprint closes and each unfinished stretch ticket carries over to the next sprint by default (Sprint value changes, Status kept); the next planning decides again whether it is committed or stretch, and a ticket promoted to committed loses the `stretch` label.
+  - Only the PO sends a sprint ticket back to Backlog. A ticket returned to Backlog has its Sprint value cleared and loses the `stretch` label.
 
 ## Reviews
 
