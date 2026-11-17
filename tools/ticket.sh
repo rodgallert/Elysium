@@ -91,9 +91,11 @@ read_issue() { # <n>: ISSUE (json), BODY, STATE
 }
 read_comments() { # <n>: COMMENTS (json array)
     must "read comments of #$1" gh api "repos/$repo/issues/$1/comments?per_page=100" --paginate
-    COMMENTS="$(jq -s 'add // []' <<<"$GH_OUT")"
+    # only the owner's comments count: anyone can comment on this public repository
+    COMMENTS="$(jq -s --arg o "$GH_LIB_OWNER" 'add // [] | map(select(.user.login == $o))' <<<"$GH_OUT")"
 }
-has_marker() { jq -e --arg m "$1" 'any(.[]; .body | contains($m))' <<<"$COMMENTS" >/dev/null; }
+# has_marker <marker>: a trusted comment with the marker as a whole line (not inside other text)
+has_marker() { jq -e --arg m "$1" 'any(.[]; (.body // "") | gsub("\r"; "") | split("\n") | any(. == $m))' <<<"$COMMENTS" >/dev/null; }
 
 PATCH_NOTE=""
 patch_issue() { # <n> <step> <request file>
@@ -112,9 +114,12 @@ MARK=""
 marker_posted() {
     local out
     out=$(timeout -k 2 "$TICKET_TIMEOUT" gh api "repos/$repo/issues/$MARK_N/comments?per_page=100" --paginate 2>/dev/null </dev/null) || return 1
-    jq -s -e --arg m "$MARK" 'add // [] | any(.[]; .body | contains($m))' <<<"$out" >/dev/null
+    jq -s -e --arg m "$MARK" --arg o "$GH_LIB_OWNER" 'add // [] | map(select(.user.login == $o))
+        | any(.[]; (.body // "") | gsub("\r"; "") | split("\n") | any(. == $m))' <<<"$out" >/dev/null
 }
 post_once() {
+    # Every caller has looked for its marker already; this check, under the same per-issue lock, is the backstop that
+    # keeps two runs from both posting (#70-AC4.5)
     if has_marker "$2"; then
         say "comment: already"
         return 0
@@ -169,7 +174,7 @@ read_edits() {
 # no spec edit is newer than <time>. Needs ISSUE, BODY and COMMENTS. The time of the last spec edit comes only from the
 # edit history (never updatedAt, not even when the history can't be read).
 spec_gate() {
-    local n="$1" approved cid comment text at last t
+    local n="$1" approved cid comment text at last t posted
     approved="$(trailer approved <<<"$BODY")"
     [ -n "$approved" ] || die "no Approved: line: the spec needs the PO's approval (Docs/workflow.md, Specs and tests)"
     [[ "$approved" =~ ^https://github\.com/rodgallert/Elysium/issues/([1-9][0-9]{0,6})#issuecomment-([0-9]+)$ ]] ||
@@ -178,28 +183,35 @@ spec_gate() {
     cid="${BASH_REMATCH[2]}"
     comment="$(jq -c --arg id "$cid" --arg u "https://api.github.com/repos/$repo/issues/$n" \
         '[.[] | select((.id | tostring) == $id and .issue_url == $u)] | first // empty' <<<"$COMMENTS")"
-    [ -n "$comment" ] || die "the Approved: comment is not a comment of #$n"
+    [ -n "$comment" ] || die "the Approved: comment is not a comment of #$n by $GH_LIB_OWNER"
     text="$(jq -r .body <<<"$comment" | tr -d '\r')"
     [[ "$text" =~ ^Issue\ last\ edited\ ([^[:space:]]+)$ ]] || die "the Approved: comment does not read 'Issue last edited <time>'"
     at="$(norm_time "${BASH_REMATCH[1]}")"
     [ -n "$at" ] || die "the approval time '${BASH_REMATCH[1]}' is not an ISO-8601 time"
+    posted="$(norm_time "$(jq -r .created_at <<<"$comment")")"
+    [ -n "$posted" ] || die "the approval comment's own time is unreadable"
+    # an approval can't cover edits made after the comment was posted
+    [[ ! "$at" > "$posted" ]] || die "the approval time $at is later than the comment's own time $posted"
 
     read_edits "$n"
     last="$(norm_time "$(jq -r .created_at <<<"$ISSUE")")"
     [ -n "$last" ] || die "the issue's creation time is unreadable"
     local spec_edits
-    # an edit that changes only Epic:, Approved:, Branch: or PR: lines is bookkeeping, not a spec edit
-    spec_edits="$(jq -r '.[]
-        | select(((.diff // "") | split("\n")
-                  | map(select(test("^[+-]")) | select(test("^(\\+\\+\\+|---)") | not) | sub("^[+-]"; ""))) as $c
-                 | (($c | length) > 0 and ($c | all(test("^(Epic|Approved|Branch|PR): ") or test("^[[:space:]]*$")))) | not)
-        | .createdAt' <<<"$EDITS")"
+    jq -e 'all(.[]; (.diff | type) == "string")' <<<"$EDITS" >/dev/null || die "edit history unreadable (a revision has no text)"
+    # Each node's diff is the whole body of that revision, newest first, the last node being the original text. A revision
+    # is a spec edit when its text differs from the next older one's after taking away the bookkeeping lines: Epic: and
+    # Estimate: at the top, Approved:, Branch: and PR: at the end (so a PR: line inside a spec section is not exempt).
+    spec_edits="$(jq -r 'def blank: test("^[[:space:]]*$");
+        def spec: gsub("\r"; "") | split("\n")
+            | until(length == 0 or ((.[0] | (test("^(Epic|Estimate): ") or blank)) | not); .[1:])
+            | until(length == 0 or ((.[-1] | (test("^(Approved|Branch|PR): ") or blank)) | not); .[:-1]);
+        . as $n | [range(0; length - 1) | select(($n[.].diff | spec) != ($n[. + 1].diff | spec)) | $n[.].createdAt] | .[]' <<<"$EDITS")"
     if [ -n "$spec_edits" ]; then
         last=""
         while IFS= read -r t; do
             t="$(norm_time "$t")"
             [ -n "$t" ] || die "edit history unreadable (an edit has an unreadable time)"
-            [ -z "$last" ] || [[ "$t" > "$last" ]] && last="$t"
+            if [ -z "$last" ] || [[ "$t" > "$last" ]]; then last="$t"; fi
         done <<<"$spec_edits"
     fi
     if [[ "$at" < "$last" ]]; then
@@ -235,7 +247,7 @@ cmd_start() {
     branch="$(trailer branch <<<"$BODY")"
     if [ -n "$branch" ]; then
         valid_branch "$branch" || die "the Branch: line of #$n is not a valid branch name"
-        if has_marker "ticket.sh:started" || jq -e --arg t "Started on branch $branch." 'any(.[]; .body | startswith($t))' <<<"$COMMENTS" >/dev/null; then
+        if jq -e --arg t "Started on branch $branch." 'any(.[]; (.body // "") | startswith($t))' <<<"$COMMENTS" >/dev/null; then
             say "already started on $branch"
             return 0
         fi
@@ -262,6 +274,9 @@ cmd_start() {
     fi
     BR="$branch"
     if branch_exists "$branch"; then
+        # not made by this run: it must be the one linked to this issue, not a namesake of another ticket
+        must "list the branches linked to #$n" gh issue develop --list "$n" -R "$repo"
+        cut -f1 <<<"$GH_OUT" | grep -qxF "$branch" || die "branch $branch exists but is not linked to #$n"
         say "branch: $branch (exists)"
     else
         GH_VERIFY=branch_verify gh_call "create branch $branch" gh issue develop "$n" -R "$repo" --base main --name "$branch" || die "$GH_MSG"
@@ -298,7 +313,7 @@ cmd_review() {
     if [ -n "$line" ]; then
         have="$(pr_number_of "$line")"
         [ "$have" = "$pr" ] || die "#$n already has the line 'PR: $line': refusing to add PR #$pr"
-        if has_marker "ticket.sh:review:$pr"; then
+        if has_marker "<!-- ticket.sh:review:$pr -->"; then
             say "already in review: #$pr"
             return 0
         fi
@@ -331,7 +346,7 @@ cmd_done() {
     line="$(trailer pr <<<"$BODY")"
     pr="$(pr_number_of "$line")"
     [ -n "$pr" ] || die "#$n has no PR: line: nothing to mark as done"
-    if has_marker "ticket.sh:done"; then
+    if has_marker "<!-- ticket.sh:done -->"; then
         say "already done: #$n"
         return 0
     fi
@@ -375,7 +390,10 @@ cmd_file() {
     [ "$first" = "Epic: #$epic" ] || die "the first line of the body must be 'Epic: #$epic'"
     gh_init
 
-    local n="$resume" url="" mnum="null"
+    local n="$resume" url="" mnum="null" since
+    since="$(date -u -d "@$(($(date +%s) - 120))" +%Y-%m-%dT%H:%M:%SZ)" # the run's start, less a margin for clock skew
+    FILE_SINCE="$since"
+    FILE_BODYFILE="$bodyfile"
     if [ -z "$n" ]; then
         if [ -n "$milestone" ]; then
             must "list milestones" gh api "repos/$repo/milestones?state=all&per_page=100" --paginate
@@ -394,12 +412,20 @@ cmd_file() {
     else
         must "read issue #$n" gh api "repos/$repo/issues/$n"
         url="$(jq -r .html_url <<<"$GH_OUT")"
-        say "create: #$n (re-run)"
     fi
     local body replaced
     body="$(cat "$bodyfile"; printf x)"
     body="${body%x}"
     replaced="${body//'#<issue>-AC'/#$n-AC}"
+    printf '%s' "$replaced" >"$tmp/replaced.txt"
+    if [ -n "$resume" ]; then
+        # --issue only finishes the issue this body was filed as: an issue, with this title, holding this body (or its replaced form)
+        jq -e --arg t "$title" --rawfile b "$bodyfile" --rawfile r "$tmp/replaced.txt" '
+            def nb: (. // "") | gsub("\r"; "") | sub("\\s+$"; "");
+            (has("pull_request") | not) and .title == $t and ((.body | nb) == ($b | nb) or (.body | nb) == ($r | nb))' <<<"$GH_OUT" >/dev/null ||
+            die "#$n is not the issue this body file was filed as (a pull request, another title or another body): refusing to overwrite it"
+        say "create: #$n (re-run)"
+    fi
     if [[ "$replaced" == *'<issue>'* ]]; then
         die "issue #$n was created ($url), but its body still has an <issue> placeholder: fix the body file and run again with --issue $n"
     fi
@@ -412,11 +438,17 @@ cmd_file() {
     say ok
 }
 FILE_TITLE=""
+FILE_SINCE=""
+FILE_BODYFILE=""
 RECENT=""
+# recent_issue: after a create whose answer was lost, the issue this run created: an issue (not a PR) with this title and
+# this body, created no earlier than the run's start; never an older namesake
 recent_issue() {
     local out
     out=$(timeout -k 2 "$TICKET_TIMEOUT" gh api "repos/$repo/issues?state=all&creator=$GH_LIB_OWNER&sort=created&direction=desc&per_page=10" 2>/dev/null </dev/null) || return 1
-    RECENT="$(jq -c --arg t "$FILE_TITLE" '[.[] | select(.title == $t)] | first // empty' <<<"$out")"
+    RECENT="$(jq -c --arg t "$FILE_TITLE" --arg since "$FILE_SINCE" --rawfile b "$FILE_BODYFILE" '
+        def nb: (. // "") | gsub("\r"; "") | sub("\\s+$"; "");
+        [.[] | select((has("pull_request") | not) and .title == $t and (.body | nb) == ($b | nb) and .created_at >= $since)] | first // empty' <<<"$out")"
     [ -n "$RECENT" ]
 }
 

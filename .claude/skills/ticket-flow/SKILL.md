@@ -18,7 +18,7 @@ Board columns: **Backlog** → **Ready** → **In progress** → **In review** �
 
 Move an issue with `tools/board.sh <issue> "<column>"` (it adds the issue to the board if it isn't there yet).
 
-**Ticket bookkeeping runs through `tools/ticket.sh`** (`file`, `start`, `review`, `ready`, `done`, below), never through hand-assembled `gh` calls. The script is the only place the approval time and the spec gate are computed. It uses only the rodgallert token (never `gh auth switch`, never the active account's token), retries a 5xx or a rate limit with backoff, and prints one line per step. A re-run is safe: it finishes what an earlier run left and repeats nothing (no second `Branch:` line, no second comment). If the script fails, say so and stop: stop and report its last line to the PO, never switch accounts, and don't redo its steps by hand. `tools/tests/ticket-tools.sh` tests it against a stubbed `gh`.
+**Ticket bookkeeping runs through `tools/ticket.sh`** (`file`, `start`, `review`, `ready`, `done`, below), never through hand-assembled `gh` calls. The script is the only place the approval time and the spec gate are computed. It uses only the rodgallert token (never `gh auth switch`, never the active account's token), retries a 5xx or a rate limit with backoff, and prints one line per step. A re-run is safe: it finishes what an earlier run left and repeats nothing (no second `Branch:` line, no second comment). If the script fails, say so and stop. Report its last line to the PO, never switch accounts, and don't redo its steps by hand. `tools/tests/ticket-tools.sh` tests it against a stubbed `gh`.
 
 Changing a board field's options (adding, renaming or removing a Status, Sprint or Priority option) can clear every item's value for that field. Before such a change, run `tools/board-field.sh save <field> <file>`; after it, `tools/board-field.sh check <field> <file>`, and put back any value it reports. Setting an item's value is safe and needs neither.
 
@@ -49,10 +49,9 @@ File every ticket (not epics or releases, which are filed by hand) from the issu
 
 ### `done <ticket>`: the PR merged (only after the PO approved it)
 1. Run `tools/ticket.sh done <n>`: it checks that the ticket's PR is merged, moves the board to **Done**, closes the issue if the merge didn't (hotfix PRs into a release branch never auto-close) and comments `Done in #<pr>.` once. For a release PR (`chore(release): ...`), also check the Release workflow's run on the merge commit: `gh run list -R rodgallert/Elysium --workflow release.yml --commit <merge commit> --json databaseId,event,conclusion`. The `push` run must show `success`, never `cancelled` (a cancelled run isn't a failure, but it released nothing); if it didn't, tell the PO and don't move the ticket to Done.
-2. (Done by the script in step 1.)
-3. Update the local `main` (`git switch main && git pull --ff-only`) and delete the merged ticket branch (`git branch -D <branch>`; `-D`, because a squash merge isn't an ancestor).
-4. Pick the next ticket of the phase and move it to **Ready**, unless the PO named another one.
-5. If the ticket's epic is a phase epic and every sub-issue of it is now closed, the phase is ready for its checkpoint: go to `checkpoint`.
+2. Update the local `main` (`git switch main && git pull --ff-only`) and delete the merged ticket branch (`git branch -D <branch>`; `-D`, because a squash merge isn't an ancestor).
+3. Pick the next ticket of the phase and move it to **Ready**, unless the PO named another one.
+4. If the ticket's epic is a phase epic and every sub-issue of it is now closed, the phase is ready for its checkpoint: go to `checkpoint`.
 
 (Standing epics have no checkpoint: they close only when the PO closes them.)
 

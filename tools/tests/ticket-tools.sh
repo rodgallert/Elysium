@@ -1023,7 +1023,7 @@ test_ac6_docs() {
     check "#70-AC6 workflow.md tells to run tools/ticket.sh" grep -qF "tools/ticket.sh" "$wf"
     check "#70-AC6 the docs say the script is the only place the approval time and the spec gate are computed" bash -c 'grep -qi "only place" "'"$skill"'" && grep -qi "only place" "'"$wf"'"'
     check "#70-AC6 the manual fallback is only: if the script fails, say so and stop" grep -qi "if the script fails, say so and stop" "$skill"
-    check "#70-AC6.6 the docs say what to do when a step fails (stop and report)" grep -qi "stop and report" "$skill"
+    check "#70-AC6.6 the docs say what to do when a step fails (report its last line, never switch accounts)" grep -qi "report its last line" "$skill"
     check "#70-AC6.7 the docs say a re-run is safe" grep -qi "re-run is safe" "$skill"
     check "#70-AC6.8 the docs repeat never gh auth switch" bash -c 'grep -qF "gh auth switch" "'"$skill"'" && grep -qi "never.*gh auth switch" "'"$skill"'"'
     check "#70-AC6 tools/tests/ticket-tools.sh is listed in the gate job" grep -qF "tools/tests/ticket-tools.sh" "$tools/../.github/workflows/build.yml"

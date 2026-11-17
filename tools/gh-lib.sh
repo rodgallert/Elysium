@@ -36,6 +36,7 @@ valid_number() { [[ "${1-}" =~ ^[1-9][0-9]{0,6}$ ]]; }
 # gh_init: checks the tools, then sets GH_TOKEN to the owner's token without switching accounts or reading the active
 # account's token. A GH_TOKEN already in the environment is accepted only if it belongs to the owner.
 gh_init() {
+    export GH_HOST=github.com # a stray GH_HOST in the caller's environment must not change which login is used
     command -v jq >/dev/null 2>&1 || die "jq is missing: install jq"
     command -v gh >/dev/null 2>&1 || die "gh is missing: install the GitHub CLI (version $GH_LIB_MIN_VERSION or newer)"
     local version
@@ -48,7 +49,7 @@ gh_init() {
         gh_call "check the token's account" gh api user -q .login || die "$GH_MSG"
         [ "$GH_OUT" = "$GH_LIB_OWNER" ] || die "GH_TOKEN is not the $GH_LIB_OWNER account's: unset it to use the $GH_LIB_OWNER login"
     else
-        GH_TOKEN=$(gh auth token --user "$GH_LIB_OWNER" 2>/dev/null) && [ -n "$GH_TOKEN" ] ||
+        GH_TOKEN=$(gh auth token --user "$GH_LIB_OWNER" --hostname github.com 2>/dev/null) && [ -n "$GH_TOKEN" ] ||
             die "gh has no login for $GH_LIB_OWNER: gh auth login --skip-ssh-key -s project"
         export GH_TOKEN
     fi
@@ -79,8 +80,10 @@ $GH_OUT"
             GH_KIND=timeout
         elif [[ "$status" =~ ^5[0-9][0-9]$ ]]; then
             GH_KIND=server
-        elif [ "$status" = 403 ] || [ "$status" = 429 ]; then
-            if grep -qiE 'rate limit|retry-after:|x-ratelimit-remaining: *0' <<<"$text"; then GH_KIND=ratelimit; else GH_KIND=perm; fi
+        elif [ "$status" = 429 ] || grep -qi 'rate limit' <<<"$text"; then
+            GH_KIND=ratelimit # also GraphQL's, which has no HTTP status
+        elif [ "$status" = 403 ]; then
+            if grep -qiE 'retry-after:|x-ratelimit-remaining: *0' <<<"$text"; then GH_KIND=ratelimit; else GH_KIND=perm; fi
         elif [ "$status" = 404 ]; then
             GH_KIND=notfound
         else
@@ -89,12 +92,14 @@ $GH_OUT"
         if { [ "$GH_KIND" = server ] || [ "$GH_KIND" = ratelimit ] || [ "$GH_KIND" = timeout ]; } && [ "$attempt" -lt 3 ]; then
             wait=$((2 << attempt))
             if [ "$GH_KIND" = ratelimit ]; then
+                # gh prints no response headers unless asked to, so usually neither is readable: wait the cap
+                wait=60
                 ra=$(grep -iE '^retry-after:' <<<"$text" | head -1 | sed -E 's/^[^:]*: *//; s/[[:space:]]*$//')
                 reset=$(grep -iE '^x-ratelimit-reset:' <<<"$text" | head -1 | sed -E 's/^[^:]*: *//; s/[[:space:]]*$//')
-                if [[ "$ra" =~ ^[0-9]+$ ]]; then
-                    wait=$ra
-                elif [[ "$reset" =~ ^[0-9]+$ ]] && [ $((reset - $(date +%s))) -ge 1 ]; then
-                    wait=$((reset - $(date +%s)))
+                if [ -n "$ra" ]; then
+                    if [[ "$ra" =~ ^[0-9]+$ ]]; then wait=$ra; else wait=$((2 << attempt)); fi
+                elif [[ "$reset" =~ ^[0-9]+$ ]]; then
+                    if [ $((reset - $(date +%s))) -ge 1 ]; then wait=$((reset - $(date +%s))); else wait=$((2 << attempt)); fi
                 fi
             fi
             [ "$wait" -le 60 ] || wait=60
@@ -112,7 +117,7 @@ $GH_OUT"
         case "$GH_KIND" in
             notfound) GH_MSG="$step: not found (HTTP 404)" ;;
             perm) GH_MSG="$step: permission denied (HTTP 403), not retried" ;;
-            ratelimit) GH_MSG="$step: rate limited (HTTP $status) after $((attempt + 1)) attempts" ;;
+            ratelimit) GH_MSG="$step: rate limited${status:+ (HTTP $status)} after $((attempt + 1)) attempts" ;;
             server) GH_MSG="$step: failed (HTTP $status) after $((attempt + 1)) attempts" ;;
             timeout) GH_MSG="$step: timed out after ${TICKET_TIMEOUT}s ($((attempt + 1)) attempts)" ;;
             *) GH_MSG="$step: failed (exit $rc${status:+, HTTP $status})" ;;
