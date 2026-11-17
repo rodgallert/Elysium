@@ -33,7 +33,7 @@ A **phase checkpoint** has no PR: when the phase's last ticket is done, review e
 
 Anything else (wrong base, a ticket into a release branch, `main` or a release branch as the head) is a **Must fix**.
 
-A PR is **docs-only** when every changed file is Markdown (`.md`), wherever it lives. Anything else under `.claude/` (settings, hooks, scripts) is code. Docs-only PRs skip the worktree build (section 2), the build and boundary lines of section 3, and the code review (section 5), and get a read-through instead. The build jobs don't run on Markdown-only changes, so a docs-only PR has no build to wait for (its `gate` check still reports and passes): don't list the missing build jobs as a finding. Every other check still applies: title, branch, issue link, roadmap boxes and repo hygiene.
+A PR is **docs-only** when every changed file is Markdown (`.md`), wherever it lives. Anything else under `.claude/` (settings, hooks, scripts) is code. Docs-only PRs skip the worktree build (section 2), the build and boundary lines of section 3, and the code review (section 5), and get a read-through instead. The build jobs don't run on Markdown-only changes, so a docs-only PR has no build to wait for (its `gate` check still reports and passes): don't list the missing build jobs as a finding. Every other check still applies: title, branch, issue link, roadmap boxes and repo hygiene, and the read-through checks that the PR meets its issue's numbered criteria.
 
 Read the rules **from the PR's own head branch**, since PRs can change them: `CLAUDE.md`, `ROADMAP.md`, `Docs/workflow.md`, `Docs/platform-design.md`, and the `CLAUDE.md` and decision log of every service the PR touches. If the PR depends on a rule that only exists on another unmerged branch, that's a finding (merge order), not something to assume.
 
@@ -60,7 +60,7 @@ docker run --rm -v "$WT":/src -w /src mcr.microsoft.com/dotnet/sdk:10.0 dotnet t
 
 Tests that need Postgres, RabbitMQ or Redis start them themselves (containers); if they can't run here, say so under "Not checked". For each frontend the PR touches: `npm ci && npm run build`, plus `npm run lint` when the app has a lint script.
 
-A known warning that the service's `CLAUDE.md` already lists is not a finding; any other new warning is. When done: `git -C $REPO worktree remove --force $WT`.
+A known warning that the service's `CLAUDE.md` already lists is not a finding; any other new warning is. Keep the worktree until the loosen-a-rule step in section 3 is done. When done: `git -C $REPO worktree remove --force $WT`.
 
 ## 3. Mechanical checks
 
@@ -71,8 +71,13 @@ Each failure is a **Must fix** unless noted.
 - **Branch name** follows `Docs/workflow.md` for its level. Type in the branch matches the type in the title.
 - **Issue link:** tickets say `Closes #<issue>` for every roadmap task they complete (Should fix if missing). Merges into `main` close them automatically; the reviewer only checks the links are there and point at the right tickets.
 - **Roadmap boxes:** the tasks the PR completes are ticked in `ROADMAP.md`; nothing is ticked that the code doesn't actually do yet.
+- **Spec and traceability** (`Docs/workflow.md`, "Specs and tests"; not for spikes, docs-only tickets or releases): the issue holds a spec with numbered acceptance criteria, edge cases and failure paths, and the PO's approval. The PR description maps every criterion and every listed edge case to tests, and each test names its criterion. A criterion or listed edge case with no test is a **Must fix**; so is a PR whose spec was changed without the change being approved on the issue.
+- **Test-first order:** `git log --reverse` on the branch: the first commit adds the tests (failing for the right reason), later commits make them pass; for compose and infrastructure, the failing smoke, lint or port check comes first. A code ticket whose tests only arrive with or after the implementation is a **Should fix** (a **Must fix** when the tests are missing for a risky path). For an API or message change, the OpenAPI document or schema comes before the handlers, with contract tests (**Must fix** if missing).
+- **Happy path only:** tests that cover only the successful case, with the spec's edge cases and failure paths (bad input, boundaries, concurrency, partial failure, retries and duplicates, permissions) untested or not marked as not applicable with a reason, are a **Must fix**.
 - **Breaking changes:** if the change forces a consumer of a service to change (an endpoint, field, status code or message contract changed or removed, token claims changed, a migration that drops or rewrites data, a renamed or removed config key or environment variable, a removed login method or permission), or rewrites code a finished scenario relies on (`Docs/workflow.md`, "Breaking changes"), the PR has a "## Breaking change" section and the linked issue a "Breaking change" note, both saying what can break and what to do, and the title and commit carry `!` and `BREAKING CHANGE:`. Anything missing is a **Must fix**.
 - **Repo hygiene:** no build output, no `.env` or other secrets, no credentials or tokens in code, tests or fixtures, no personal data in fixtures beyond obviously fake values.
+
+**Loosen a rule and see a test fail** (code tickets): in the scratch worktree, pick one rule the change implements (remove a validation, widen a limit, drop an ownership or permission check, remove a unique constraint or idempotency guard), change it, run the tests and confirm one fails, then restore the file (`git checkout -- .`). Name the rule you loosened under "Checked". If every test still passes, the tests don't pin the rule: a **Must fix**. Docs-only PRs skip this.
 
 ## 4. Roadmap and design check
 
@@ -151,7 +156,7 @@ Each finding names the file and line, says what is wrong, and why it matters. On
 - #<issue>: summary
 
 **Checked**
-- Build: ... · Tests: ... · Boundary check: ... · CI: ... · Title and branch: ... · Issue link: ... · Roadmap: ... · Security: ...
+- Build: ... · Tests: ... · Spec and traceability: ... · Test-first order: ... · Loosened rule: ... · Boundary check: ... · CI: ... · Title and branch: ... · Issue link: ... · Roadmap: ... · Security: ...
 
 **Not checked**
 - ... (e.g. behaviour on the running stack, with what to try and what to expect)
