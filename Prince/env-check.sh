@@ -40,20 +40,47 @@ done
 min_length FILE_STORAGE_ROOT_USER 3
 min_length FILE_STORAGE_ROOT_PASSWORD 8
 
-# Bucket names follow S3's rules: 3 to 63 characters, lower case letters, digits, dots and hyphens
+# Postgres values go into Npgsql connection strings (Key=Value;Key=Value), where a semicolon ends the value
+for name in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB; do
+    case "$(value "$name")" in
+    *";"*) bad "$name" "must not contain a semicolon (the connection strings are semicolon separated)" ;;
+    esac
+done
+
+# Bucket names follow S3's rules: 3 to 63 characters of lower case letters, digits, dots and hyphens; they start
+# and end with a letter or digit, have no two dots in a row and aren't written like an IP address
 bucket="$(value FILE_STORAGE_BUCKET)"
 if [ -n "$bucket" ]; then
-    if [ "${#bucket}" -lt 3 ] || [ "${#bucket}" -gt 63 ] || [ -n "$(printf '%s' "$bucket" | tr -d 'a-z0-9.-')" ]; then
-        bad FILE_STORAGE_BUCKET "must be 3 to 63 characters: lower case letters, digits, dots and hyphens"
+    ok=1
+    [ "${#bucket}" -ge 3 ] && [ "${#bucket}" -le 63 ] || ok=0
+    [ -z "$(printf '%s' "$bucket" | tr -d 'a-z0-9.-')" ] || ok=0
+    case "$bucket" in
+    [!a-z0-9]* | *[!a-z0-9] | *..*) ok=0 ;;
+    esac
+    if [ -z "$(printf '%s' "$bucket" | tr -d '0-9.')" ]; then
+        case "$bucket" in
+        [0-9]*.[0-9]*.[0-9]*.[0-9]*) ok=0 ;;
+        esac
     fi
+    [ "$ok" -eq 1 ] || bad FILE_STORAGE_BUCKET "must follow S3 bucket names: 3 to 63 lower case letters, digits, dots and hyphens, starting and ending with a letter or digit, no two dots in a row, not an IP address"
+fi
+
+# The Jobs admin's email is its Identity user name, which allows only letters, digits and - . _ @ +
+email="$(value JOBS_ADMIN_EMAIL)"
+if [ -n "$email" ] && [ -n "$(printf '%s' "$email" | tr -d 'a-zA-Z0-9._@+-')" ]; then
+    bad JOBS_ADMIN_EMAIL "may only contain ASCII letters, digits and the characters - . _ @ +"
 fi
 
 # The Jobs dashboard's admin is created with ASP.NET Identity's default password policy; when the password
-# breaks it the account is never created and the login fails without a log line
+# breaks it the account is never created and the login fails without a log line. Identity counts UTF-16 code
+# units (a character outside the BMP counts twice) and takes only ASCII letters and digits as such, so any
+# other character, accented letters included, is the symbol. The length counts UTF-8 bytes that aren't
+# continuation bytes, plus one more for each 4-byte lead byte.
 jobs="$(value JOBS_ADMIN_PASSWORD)"
 if [ -n "$jobs" ]; then
     ok=1
-    [ "${#jobs}" -ge 6 ] || ok=0
+    units=$(($(printf '%s' "$jobs" | tr -d '\200-\277' | wc -c) + $(printf '%s' "$jobs" | tr -cd '\360-\364' | wc -c)))
+    [ "$units" -ge 6 ] || ok=0
     [ -n "$(printf '%s' "$jobs" | tr -cd '[:lower:]')" ] || ok=0
     [ -n "$(printf '%s' "$jobs" | tr -cd '[:upper:]')" ] || ok=0
     [ -n "$(printf '%s' "$jobs" | tr -cd '0-9')" ] || ok=0

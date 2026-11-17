@@ -124,11 +124,18 @@ services:
   file-storage-init:
     # Same image as the server: its bundled client (mcli) creates the bucket
     image: pgsty/silo:RELEASE.2026-11-12T00-00-00Z
-    entrypoint: >
-      /bin/sh -c "
-      mcli alias set local http://file-storage:9000 ${FILE_STORAGE_ROOT_USER} ${FILE_STORAGE_ROOT_PASSWORD} &&
-      mcli mb --ignore-existing local/${FILE_STORAGE_BUCKET}
-      "
+    # The values come in through the environment and are quoted, so a space or a shell character in one can't
+    # break the command or add to it
+    environment:
+      FILE_STORAGE_ROOT_USER: ${FILE_STORAGE_ROOT_USER}
+      FILE_STORAGE_ROOT_PASSWORD: ${FILE_STORAGE_ROOT_PASSWORD}
+      FILE_STORAGE_BUCKET: ${FILE_STORAGE_BUCKET}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mcli alias set local http://file-storage:9000 "$$FILE_STORAGE_ROOT_USER" "$$FILE_STORAGE_ROOT_PASSWORD" &&
+        mcli mb --ignore-existing "local/$$FILE_STORAGE_BUCKET"
     depends_on:
       env-check:
         condition: service_completed_successfully

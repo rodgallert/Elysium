@@ -2,6 +2,8 @@
 # Tests for Prince/env-check.sh, the script of the `env-check` Compose service. It needs no Docker: the script runs
 # with `sh` and the values it checks in its environment (an empty environment, so nothing leaks in from the caller).
 # Usage: tools/tests/env-check.sh
+# With ENV_CHECK_IMAGE=<image> the script runs in that image (no network, as the compose service does) instead of the
+# local sh, to test it under the shell the container really has (busybox ash in alpine).
 set -uo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -29,7 +31,14 @@ run() { # variable=value overrides... ; sets $out and $rc; an override without a
     for override in "$@"; do
         case "$override" in *=*) vars+=("$override") ;; esac
     done
-    out="$(env -i PATH="$PATH" "${vars[@]}" sh "$script" 2>&1)"
+    if [ -n "${ENV_CHECK_IMAGE:-}" ]; then
+        local -a envs=()
+        for item in "${vars[@]}"; do envs+=(-e "$item"); done
+        out="$(docker run --rm --network none --read-only --user 65534:65534 "${envs[@]}" -v "$script":/env-check.sh:ro \
+            "$ENV_CHECK_IMAGE" sh /env-check.sh 2>&1)"
+    else
+        out="$(env -i PATH="$PATH" "${vars[@]}" sh "$script" 2>&1)"
+    fi
     rc=$?
 }
 
@@ -78,6 +87,12 @@ fails "bucket of 2 characters" FILE_STORAGE_BUCKET FILE_STORAGE_BUCKET=ab
 fails "bucket of 64 characters" FILE_STORAGE_BUCKET "FILE_STORAGE_BUCKET=$(printf 'a%.0s' {1..64})"
 fails "bucket with an upper case letter" FILE_STORAGE_BUCKET FILE_STORAGE_BUCKET=Product-files
 fails "bucket with an underscore" FILE_STORAGE_BUCKET FILE_STORAGE_BUCKET=product_files
+fails "bucket starting with a hyphen" FILE_STORAGE_BUCKET FILE_STORAGE_BUCKET=-abc
+fails "bucket ending with a hyphen" FILE_STORAGE_BUCKET FILE_STORAGE_BUCKET=abc-
+fails "bucket starting with a dot" FILE_STORAGE_BUCKET FILE_STORAGE_BUCKET=.abc
+fails "bucket with two dots in a row" FILE_STORAGE_BUCKET FILE_STORAGE_BUCKET=a..b
+fails "bucket written like an IP address" FILE_STORAGE_BUCKET FILE_STORAGE_BUCKET=192.168.1.1
+passes "bucket with dots and hyphens" FILE_STORAGE_BUCKET=my-files.v1
 fails "empty bucket" FILE_STORAGE_BUCKET FILE_STORAGE_BUCKET=
 
 # The Jobs admin password: ASP.NET Identity's default policy
@@ -91,6 +106,24 @@ fails "empty Jobs password" JOBS_ADMIN_PASSWORD JOBS_ADMIN_PASSWORD=
 fails "missing Jobs password" JOBS_ADMIN_PASSWORD JOBS_ADMIN_PASSWORD
 passes "Jobs password with a space as the symbol" 'JOBS_ADMIN_PASSWORD=Change Me1'
 passes "Jobs password with characters the shell treats specially" 'JOBS_ADMIN_PASSWORD=A1b$`"\*'"'"'-x'
+# Identity counts UTF-16 code units and takes only ASCII letters and digits as such, so other letters are symbols
+passes "Jobs password with an accented letter as the symbol" 'JOBS_ADMIN_PASSWORD=Abcdef1é'
+fails "Jobs password of 5 characters, one of them two bytes long" JOBS_ADMIN_PASSWORD 'JOBS_ADMIN_PASSWORD=Ab1!é'
+fails "Jobs password with an accented capital as its only capital" JOBS_ADMIN_PASSWORD 'JOBS_ADMIN_PASSWORD=Ébcde1!'
+passes "Jobs password with a character outside the BMP as the symbol (2 units)" 'JOBS_ADMIN_PASSWORD=Abc1😀'
+fails "Jobs password of 5 units with a symbol outside the BMP" JOBS_ADMIN_PASSWORD 'JOBS_ADMIN_PASSWORD=Ab😀1'
+
+# The Jobs email is the Identity user name
+passes "Jobs email with every allowed character" 'JOBS_ADMIN_EMAIL=a.B-c_d+1@prince.local'
+fails "Jobs email with an apostrophe" JOBS_ADMIN_EMAIL "JOBS_ADMIN_EMAIL=o'brien@prince.local"
+fails "Jobs email with a space" JOBS_ADMIN_EMAIL 'JOBS_ADMIN_EMAIL=a b@prince.local'
+fails "Jobs email with an accented letter" JOBS_ADMIN_EMAIL 'JOBS_ADMIN_EMAIL=é@prince.local'
+
+# A semicolon splits the connection strings
+for variable in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB; do
+    fails "$variable with a semicolon" "$variable" "$variable=a;b"
+done
+passes "Postgres password with other special characters" 'POSTGRES_PASSWORD=a b$`"\*'"'"'='
 
 # The other values only need to be set
 for variable in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB REVERSE_PROXY_PORT JOBS_ADMIN_EMAIL; do
