@@ -816,6 +816,12 @@ test_ac5_4_timeout() {
     new_world
     spec_issue 20
     TT=1
+    fault "$(read_fault)" 3 hang
+    t start 20
+    check "#70-AC5 timeouts back off 2 s, 4 s, 8 s like a 5xx" eq "$(tr '\n' ' ' <"$STUB_DIR/sleeps")" "2 4 8 "
+    new_world
+    spec_issue 20
+    TT=1
     fault "$(read_fault)" 99 hang
     t start 20
     check "#70-AC5.4 a call that always hangs: non-zero exit saying it timed out" bash -c '[ '"$rc"' -ne 0 ] && grep -qi "timed out" <<<"$1"' _ "$err"
