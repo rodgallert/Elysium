@@ -180,5 +180,16 @@ else
     echo "    tests:   $script_vars"
 fi
 
+# The Postgres healthcheck reads the user and database from the container's environment, quoted, so a space or a
+# shell character in a value can't break or add to the command
+health="$(grep 'pg_isready' "$root/Prince/docker-compose.yml")"
+if [ "$(wc -l <<<"$health")" -eq 1 ] && grep -qF -- '-U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\"' <<<"$health"; then
+    pass=$((pass + 1))
+else
+    failed=$((failed + 1))
+    echo "FAIL: the Postgres healthcheck must use \"\$\$POSTGRES_USER\" and \"\$\$POSTGRES_DB\" (quoted, from the container)"
+    echo "    $health"
+fi
+
 echo "$pass passed, $failed failed"
 [ "$failed" -eq 0 ]
