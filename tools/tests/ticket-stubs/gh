@@ -4,7 +4,8 @@
 # Every call is recorded in $STUB_DIR/calls.log (token, then each argument, tab separated) and every write in
 # $STUB_DIR/writes.log. It never reaches GitHub, and it refuses to run outside the tests.
 #
-# State ($STUB_DIR): issue/<n>.json (REST shape), comments/<n>.json, edits/<n>.json (userContentEdits, newest first),
+# State ($STUB_DIR): issue/<n>.json (REST shape), comments/<n>.json (with user and created_at), edits/<n>.json (userContentEdits
+# nodes, newest first, each `diff` the whole body of that revision as GitHub returns it), linked (issue<TAB>branch),
 # pr/<n>.json, branches (one name per line), board/<n> (Status), faults, failnth.
 # Faults, one per line in $STUB_DIR/faults: <glob over the joined arguments><TAB><times><TAB><mode>[<TAB>after]
 #   modes: 502, rl-secondary:<seconds>, rl-primary, perm, 404, hang. With "after" the call's effect happens first and
@@ -36,6 +37,9 @@ fail() { # <mode>: the way a failing gh call looks
     case "$1" in
         502) echo "gh: Bad Gateway (HTTP 502)" >&2 ;;
         rl-secondary:*) printf 'gh: You have exceeded a secondary rate limit (HTTP 403)\nRetry-After: %s\n' "${1#rl-secondary:}" >&2 ;;
+        rl-bare) echo "gh: API rate limit exceeded (HTTP 403)" >&2 ;; # what gh prints: no header lines
+        rl-graphql) echo "GraphQL: API rate limit already exceeded for user ID 1." >&2 ;; # HTTP 200, no status
+        429) echo "gh: Too Many Requests (HTTP 429)" >&2 ;;
         rl-primary) printf 'gh: API rate limit exceeded (HTTP 403)\nx-ratelimit-remaining: 0\nx-ratelimit-reset: %s\n' "$(($(date +%s) + 20))" >&2 ;;
         perm) echo "gh: Resource not accessible by personal access token (HTTP 403)" >&2 ;;
         404) echo "gh: Not Found (HTTP 404)" >&2 ;;
@@ -89,7 +93,6 @@ if [ -z "$mode" ] && [ -f failnth ] && [ "$(wc -l <calls.log)" -ge "$(cat failnt
 fi
 [ -n "$mode" ] && [ "$when" = before ] && fail "$mode"
 
-now="2026-06-01T00:00:00Z"
 write() { echo "$1" >>writes.log; }
 getissue() { jq -c . "issue/$1.json"; }
 setissue() { # <n> <jq filter...>
@@ -141,8 +144,8 @@ api() {
             if [ "$method" = POST ]; then
                 write comment
                 local id=$((6000 + $(jq length "comments/$n.json")))
-                jq -c --argjson id "$id" --arg url "https://api.github.com/repos/$repo/issues/$n" --slurpfile i "$input" \
-                    '. + [{id:$id, body:$i[0].body, issue_url:$url}]' "comments/$n.json" >"comments/$n.tmp" && mv "comments/$n.tmp" "comments/$n.json"
+                jq -c --argjson id "$id" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg url "https://api.github.com/repos/$repo/issues/$n" --slurpfile i "$input" \
+                    '. + [{id:$id, body:$i[0].body, issue_url:$url, user:{login:"rodgallert"}, created_at:$now}]' "comments/$n.json" >"comments/$n.tmp" && mv "comments/$n.tmp" "comments/$n.json"
                 echo "{\"id\":$id}"
             else
                 jq -c . "comments/$n.json" 2>/dev/null || echo "[]"
@@ -170,7 +173,7 @@ api() {
                 write create
                 local n=$(($(cat next-issue 2>/dev/null || echo 100) + 1))
                 echo "$n" >next-issue
-                jq -c --argjson n "$n" --arg now "$now" --arg url "https://github.com/$repo/issues/$n" --slurpfile i "$input" \
+                jq -c --argjson n "$n" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg url "https://github.com/$repo/issues/$n" --slurpfile i "$input" \
                     '{number:$n, state:"open", title:$i[0].title, body:$i[0].body, labels:[$i[0].labels[] | {name:.}], assignees:[],
                       milestone:$i[0].milestone, created_at:$now, updated_at:$now, html_url:$url}' >"issue/$n.json" <<<null
                 echo '[]' >"comments/$n.json"
@@ -238,6 +241,10 @@ case "$1" in
         case "$2" in
             view) out="https://github.com/$repo/issues/$3" ;;
             develop)
+                if [ "${3:-}" = --list ]; then
+                    awk -v n="$4" -F'\t' '$1 == n {print $2 "\thttps://github.com/'"$repo"'/tree/" $2}' linked 2>/dev/null
+                    exit 0
+                fi
                 name=""
                 prev=""
                 for a in "$@"; do
@@ -249,6 +256,7 @@ case "$1" in
                 sleep "${STUB_DEVELOP_DELAY:-0}"
                 flock 8
                 echo "$name" >>branches
+                printf '%s\t%s\n' "$3" "$name" >>linked
                 out="github.com/$repo/tree/$name"
                 ;;
             *) echo "stub gh: unexpected issue command: $joined" >&2; exit 99 ;;

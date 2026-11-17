@@ -55,11 +55,20 @@ put_issue() {
     echo '[]' >"$STUB_DIR/comments/$n.json"
     echo '[]' >"$STUB_DIR/edits/$n.json"
 }
-put_comment() { # <n> <id> <text>
-    jq -c --argjson id "$2" --arg b "$3" --arg u "https://api.github.com/repos/$repo/issues/$1" \
-        '. + [{id:$id, body:$b, issue_url:$u}]' "$STUB_DIR/comments/$1.json" >"$STUB_DIR/c.tmp" && mv "$STUB_DIR/c.tmp" "$STUB_DIR/comments/$1.json"
+put_comment() { # <n> <id> <text> [author] [created_at]
+    jq -c --argjson id "$2" --arg b "$3" --arg u "https://api.github.com/repos/$repo/issues/$1" --arg l "${4:-rodgallert}" --arg c "${5:-2026-06-01T00:00:00Z}" \
+        '. + [{id:$id, body:$b, issue_url:$u, user:{login:$l}, created_at:$c}]' "$STUB_DIR/comments/$1.json" >"$STUB_DIR/c.tmp" && mv "$STUB_DIR/c.tmp" "$STUB_DIR/comments/$1.json"
 }
 put_edits() { echo "$2" >"$STUB_DIR/edits/$1.json"; }
+# snap <createdAt> <goal> [trailer] [header]: one userContentEdits node as GitHub returns it, the diff being the whole
+# body of that revision (checked against the real history of #70, tools/tests/fixtures/ticket-70-edits.json)
+snap() {
+    local body
+    printf -v body '%s\n\n## Goal\n%s\n\n## Out of scope\nNone.\n\nApproved: https://github.com/%s/issues/20#issuecomment-5001%s\n' \
+        "${4-$'Epic: #62\nEstimate: 3 points'}" "$2" "$repo" "${3-}"
+    jq -nc --arg c "$1" --arg d "$body" '{createdAt:$c, diff:$d}'
+}
+link_branch() { printf '%s\t%s\n' "$1" "$2" >>"$STUB_DIR/linked"; }
 fault() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "${4:-}" >>"$STUB_DIR/faults"; }
 # spec_issue <n> [approval time] [extra body lines]: an approved spec; created 2026-01-01, approved 2026-01-02
 spec_issue() {
@@ -218,6 +227,7 @@ test_ac1_8_permissions() {
     spec_issue 20
     t start 20
     check "#70-AC1.8 start works with the owner's token" rc_is 0
+    check "#70-AC1.8 the token is asked for with --user rodgallert --hostname github.com" bash -c 'grep -qP "^none\tauth\ttoken\t--user\trodgallert\t--hostname\tgithub.com\t?$" "'"$STUB_DIR"'/calls.log"'
     check "#70-AC1.8 no gh auth switch call" eq "$(calls_like 'auth	switch')" 0
     check "#70-AC1.8 the active account's token is never read (no auth token call without --user)" bash -c '! grep -P "^none\tauth\ttoken\t?$" "'"$STUB_DIR"'/calls.log" && ! grep -P "auth\ttoken\t$" "'"$STUB_DIR"'/calls.log"'
     check "#70-AC1.8 every call carried the owner's token (the token lookup aside)" bash -c '! grep -v "^'"$owner_token"'" "'"$STUB_DIR"'/calls.log" | grep -vq "auth.token.--user.rodgallert"'
@@ -313,6 +323,7 @@ test_ac2_1_inputs() {
     spec_issue 20
     put_issue_body_append 20 "Branch: feat/a-thing"
     echo feat/a-thing >>"$STUB_DIR/branches"
+    link_branch 20 feat/a-thing
     t start 20
     check "#70-AC2.1 a body that already has the Branch: line gets no second one" bash -c '[ '"$rc"' -eq 0 ] && [ "$(grep -c "^Branch: " <<<"$1")" -eq 1 ] && [ '"$(writes develop)"' -eq 0 ]' _ "$(body_of 20)"
     check "#70-AC2.1 ... and the remaining steps are completed" bash -c '[ "'"$(board_of 20)"'" = "In progress" ] && [ '"$(writes comment)"' -eq 1 ]'
@@ -335,6 +346,7 @@ $err"
     spec_issue 20
     put_issue_body_append 20 "Branch: feat/a-thing"
     echo feat/a-thing >>"$STUB_DIR/branches"
+    link_branch 20 feat/a-thing
     put_comment 20 7000 "Started on branch feat/a-thing."
     t start 20
     check "#70-AC2.3 already started (an earlier, hand-made start comment): no-op, exit 0" bash -c '[ '"$rc"' -eq 0 ] && grep -qx "already started on feat/a-thing" <<<"$1" && [ '"$(all_writes)"' -eq 0 ]' _ "$out"
@@ -378,6 +390,8 @@ test_ac2_6_partial() {
     rm "$STUB_DIR/faults"
     t start 20
     check "#70-AC2.6 a re-run completes the rest: exit 0, board In progress, comment posted" bash -c '[ '"$rc"' -eq 0 ] && [ "'"$(board_of 20)"'" = "In progress" ] && [ '"$(writes comment)"' -eq 1 ]'
+    check "#70-AC5.3 a run stopped after the board move attempt and before the comment resumes safely on the next run" bash -c '[ "'"$(board_of 20)"'" = "In progress" ] && [ '"$(writes comment)"' -eq 1 ]'
+    check "#70-AC5.7 retried and re-run writes never duplicate (write counts)" bash -c '[ '"$(writes develop)"' -eq 1 ] && [ '"$(writes body)"' -eq 1 ] && [ '"$(writes comment)"' -eq 1 ] && [ '"$(writes assign)"' -eq 1 ]'
     check "#70-AC2.6 ... with no second branch, no second Branch: line, no second comment" bash -c '[ '"$(writes develop)"' -eq 1 ] && [ '"$(writes body)"' -eq 1 ] && [ '"$(writes comment)"' -eq 1 ]'
 }
 
@@ -399,9 +413,6 @@ test_ac2_9_branch_names() {
 # ---- #70-AC3: the spec gate -------------------------------------------------------------------------------------------
 
 gate_refused() { [ "$rc" -eq 1 ] && [ "$(all_writes)" -eq 0 ]; }
-edit() { # <createdAt> <diff>
-    jq -nc --arg c "$1" --arg d "$2" '{createdAt:$c, diff:$d}'
-}
 
 test_ac3_gate() {
     new_world
@@ -414,7 +425,7 @@ $err"
 
     new_world
     spec_issue 20
-    put_edits 20 "[$(edit 2026-01-03T00:00:00Z $'-A goal.\n+A new goal.')]"
+    put_edits 20 "[$(snap 2026-01-03T00:00:00Z 'A new goal.'),$(snap 2026-01-01T00:00:00Z 'A goal.')]"
     t start 20
     check "#70-AC3.3 a criteria edit after approval: refused with needs approval again" bash -c '[ '"$rc"' -eq 1 ] && [ '"$(all_writes)"' -eq 0 ]'
     check "#70-AC3.10 ... naming approval older than edit at <time>" says "approval older than edit at 2026-01-03T00:00:00Z"
@@ -422,9 +433,28 @@ $err"
 
     new_world
     spec_issue 20
-    put_edits 20 "[$(edit 2026-01-04T00:00:00Z '+Branch: feat/a-thing'),$(edit 2026-01-03T00:00:00Z $'+PR: #4\n+Approved: x'),$(edit 2026-01-02T00:00:00Z $'-Epic: #1\n+Epic: #2')]"
+    put_edits 20 "[$(snap 2026-01-04T00:00:00Z 'A goal.' $'\n\nBranch: feat/a-thing\nPR: #4'),$(snap 2026-01-03T00:00:00Z 'A goal.' $'\n\nBranch: feat/a-thing'),$(snap 2026-01-02T00:00:00Z 'A goal.' '' $'Epic: #2\nEstimate: 5 points'),$(snap 2026-01-01T00:00:00Z 'A goal.')]"
     t start 20
-    check "#70-AC3.3 edits touching only Epic:, Approved:, Branch: or PR: lines are ignored: gate passes" rc_is 0
+    check "#70-AC3.3 revisions differing only in Epic:, Estimate:, Approved:, Branch: or PR: lines are ignored: gate passes" rc_is 0
+
+    new_world
+    spec_issue 20
+    put_edits 20 "[$(snap 2026-01-03T00:00:00Z $'A goal.\nPR: #4'),$(snap 2026-01-01T00:00:00Z 'A goal.')]"
+    t start 20
+    check "#70-AC3.3 a PR: line inside a spec section is not bookkeeping: refused" gate_refused
+
+    new_world
+    spec_issue 20
+    put_edits 20 "[$(snap 2026-01-01T00:00:00Z 'A goal.')]"
+    t start 20
+    check "#70-AC3 a history of only the original revision has no edit: the creation time is the reference, gate passes" rc_is 0
+
+    new_world
+    spec_issue 20
+    put_edits 20 "[$(snap 2026-01-03T00:00:00Z 'B'),{\"createdAt\":\"2026-01-01T00:00:00Z\",\"diff\":null}]"
+    t start 20
+    check "#70-AC3.6 a revision with no text (null diff) is an unreadable history: exit 1, fails closed" bash -c '[ '"$rc"' -eq 1 ] && grep -qF "edit history unreadable" <<<"$1" && [ '"$(all_writes)"' -eq 0 ]' _ "$out
+$err"
 
     new_world
     spec_issue 20
@@ -481,13 +511,13 @@ test_ac3_1_inputs() {
 test_ac3_2_boundaries() {
     new_world
     spec_issue 20
-    put_edits 20 "[$(edit 2026-01-02T00:00:00Z '+A goal edit')]"
+    put_edits 20 "[$(snap 2026-01-02T00:00:00Z 'B'),$(snap 2026-01-01T00:00:00Z 'A')]"
     t start 20
     check "#70-AC3.2 an edit exactly at the approval time passes" rc_is 0
 
     new_world
     spec_issue 20
-    put_edits 20 "[$(edit 2026-01-02T00:00:01Z '+A goal edit')]"
+    put_edits 20 "[$(snap 2026-01-02T00:00:01Z 'B'),$(snap 2026-01-01T00:00:00Z 'A')]"
     t start 20
     check "#70-AC3.2 an edit one second later fails" gate_refused
 
@@ -498,11 +528,13 @@ test_ac3_2_boundaries() {
         new_world
         spec_issue 20
         put_edits 20 "$(jq -nc --argjson base "$base" --argjson n "$many" '
-            [range(0; $n) as $i | if $i == ($n - 1)
-                then {createdAt: (($base + 86400) | todate), diff: "+A goal edit"}
-                else {createdAt: (($base + 86400 + ($n - $i) * 60) | todate), diff: "+Branch: x"} end]')"
+            def body($goal; $branch): "Epic: #62\n\n## Goal\n" + $goal + "\n\n## Out of scope\nNone.\n\nBranch: " + $branch + "\n";
+            [range(0; $n) as $i
+             | if $i == ($n - 1) then {createdAt: (($base - 86400) | todate), diff: body("A"; "x")}
+               elif $i == ($n - 2) then {createdAt: (($base + 86400) | todate), diff: body("B"; "x")}
+               else {createdAt: (($base + 86400 + ($n - $i) * 60) | todate), diff: body("B"; "x" + ($i | tostring))} end]')"
         t start 20
-        check "#70-AC3.2 $many edits: the spec edit is found ($many edits is ${many/101/two pages}${many/100/one page})" bash -c '[ '"$rc"' -eq 1 ] && grep -qF "approval older than edit at 2026-01-03T00:00:00Z" <<<"$1"' _ "$out
+        check "#70-AC3.2 $many edits: the spec edit is found" bash -c '[ '"$rc"' -eq 1 ] && grep -qF "approval older than edit at 2026-01-03T00:00:00Z" <<<"$1"' _ "$out
 $err"
         check "#70-AC3.2 $many edits: GraphQL pages read" eq "$(calls_like 'graphql')" "$((many == 100 ? 1 : 2))"
     done
@@ -518,13 +550,13 @@ test_ac3_4_time() {
 
     new_world
     spec_issue 20
-    put_edits 20 "[$(edit 2026-01-02T00:30:00+01:00 '+A goal edit')]"
+    put_edits 20 "[$(snap 2026-01-02T00:30:00+01:00 'B'),$(snap 2026-01-01T00:00:00Z 'A')]"
     t start 20
     check "#70-AC3.4 a +01:00 time (= 2026-01-01T23:30:00Z) is normalised, not compared as text: before the approval, passes" rc_is 0
 
     new_world
     spec_issue 20
-    put_edits 20 "[$(edit 2026-01-02T00:30:00-01:00 '+A goal edit')]"
+    put_edits 20 "[$(snap 2026-01-02T00:30:00-01:00 'B'),$(snap 2026-01-01T00:00:00Z 'A')]"
     t start 20
     check "#70-AC3.4 a -01:00 time (= 01:30Z) is later than the approval: fails" gate_refused
 }
@@ -540,7 +572,7 @@ $err"
 
     new_world
     spec_issue 20
-    put_edits 20 "$(jq -nc '[range(0; 101) | {createdAt: "2025-12-01T00:00:00Z", diff: "+Branch: x"}]')"
+    put_edits 20 "$(jq -nc '[range(0; 101) | {createdAt: "2025-12-01T00:00:00Z", diff: "text"}]')"
     fault '*cursor=100*' 99 502
     t start 20
     check "#70-AC3.6 page 2 failing: the partial list is not accepted" bash -c '[ '"$rc"' -eq 1 ] && grep -qF "edit history unreadable" <<<"$1" && [ '"$(all_writes)"' -eq 0 ]' _ "$out
@@ -560,6 +592,7 @@ started_issue() { # <n>: a started ticket (Branch: line, branch, comment)
     spec_issue "$1"
     put_issue_body_append "$1" "Branch: feat/a-thing"
     echo feat/a-thing >>"$STUB_DIR/branches"
+    link_branch "$1" feat/a-thing
 }
 
 test_ac4_review() {
@@ -586,6 +619,7 @@ test_ac4_review() {
     started_issue 20
     fault '*-X POST*comments*' 1 502 after
     t review 20 9
+    check "#70-AC5.7 a retried comment write is not duplicated (the answer was lost)" eq "$(writes comment)" 1
     check "#70-AC4.6 the comment's answer is lost after it was posted: the retry posts no second comment" bash -c '[ '"$rc"' -eq 0 ] && [ '"$(writes comment)"' -eq 1 ]'
 }
 
@@ -609,6 +643,7 @@ test_ac4_done() {
     check "#70-AC4 done: board Done, issue closed, comment Done in #9. once" bash -c '[ '"$rc"' -eq 0 ] && [ "'"$(board_of 20)"'" = Done ] && [ "'"$(state_of 20)"'" = closed ] && [ '"$(writes comment)"' -eq 1 ] && grep -qF "Done in #9." <<<"$1"' _ "$(comments_of 20)"
     t 'done' 20
     check "#70-AC4.7 done twice: one comment, closed once" bash -c '[ '"$rc"' -eq 0 ] && [ '"$(writes comment)"' -eq 1 ] && [ '"$(writes close)"' -eq 1 ]'
+    check "#70-AC4.7 done twice: the second run writes nothing (no second board move)" bash -c '[ '"$(writes board)"' -eq 1 ] && [ '"$(all_writes)"' -eq 3 ]'
 
     new_world
     started_issue 20
@@ -828,6 +863,156 @@ test_ac5_9_jq() {
     jq --version | grep -q '^jq-1\.6' || echo "note: jq $(jq --version) here, not 1.6: the 1.6 filters were checked by the builtin scan only"
 }
 
+
+# ---- review findings on the first version -----------------------------------------------------------------------------
+
+test_real_history() {
+    # #70's own edit history as GitHub returned it: the last spec edit is 21:37:14Z, which is the approval time
+    new_world
+    jq -r '.[0].diff' "$tools/tests/fixtures/ticket-70-edits.json" >"$work/b70.txt"
+    put_issue 70 "$(cat "$work/b70.txt")"$'\n' "ticket,type: feat" open 2026-11-17T21:28:47Z "feat(tools): ticket.sh with a stubbed-gh test harness"
+    put_comment 70 6961927228 "Issue last edited 2026-11-17T21:37:14Z" rodgallert 2026-11-17T21:47:07Z
+    cp "$tools/tests/fixtures/ticket-70-edits.json" "$STUB_DIR/edits/70.json"
+    echo feat/ticket-script >>"$STUB_DIR/branches"
+    link_branch 70 feat/ticket-script
+    t start 70
+    check "#70-AC3 the real history of #70 (full-body revisions) passes the gate: last spec edit 21:37:14Z" rc_is 0
+    new_world
+    put_issue 70 "$(cat "$work/b70.txt")"$'\n' "ticket,type: feat" open 2026-11-17T21:28:47Z "feat(tools): ticket.sh with a stubbed-gh test harness"
+    put_comment 70 6961927228 "Issue last edited 2026-11-17T21:37:13Z" rodgallert 2026-11-17T21:47:07Z
+    cp "$tools/tests/fixtures/ticket-70-edits.json" "$STUB_DIR/edits/70.json"
+    echo feat/ticket-script >>"$STUB_DIR/branches"
+    link_branch 70 feat/ticket-script
+    t start 70
+    check "#70-AC3.2 one second before the real last spec edit: refused, naming 21:37:14Z" bash -c '[ '"$rc"' -eq 1 ] && grep -qF "approval older than edit at 2026-11-17T21:37:14Z" <<<"$1"' _ "$out
+$err"
+}
+
+test_trusted_comments() {
+    # only comments by the owner count: markers, the Started on branch text and the approval
+    new_world
+    started_issue 20
+    put_issue_body_append 20 "PR: #9"
+    echo '{"merged":true,"state":"closed"}' >"$STUB_DIR/pr/9.json"
+    put_comment 20 7100 $'<!-- ticket.sh:done -->' stranger
+    t 'done' 20
+    check "#70-AC4.6 a stranger's marker comment is ignored: done runs (board, close, its own comment)" bash -c '[ '"$rc"' -eq 0 ] && [ "'"$(board_of 20)"'" = Done ] && [ '"$(writes comment)"' -eq 1 ] && ! grep -q "^already" <<<"$1"' _ "$out"
+
+    new_world
+    started_issue 20
+    put_issue_body_append 20 "PR: #9"
+    echo '{"merged":true,"state":"closed"}' >"$STUB_DIR/pr/9.json"
+    put_comment 20 7100 'see <!-- ticket.sh:done --> in the middle of a line'
+    t 'done' 20
+    check "#70-AC4.6 a marker inside a longer line does not count (whole-line match): done runs" bash -c '[ '"$rc"' -eq 0 ] && [ '"$(writes comment)"' -eq 1 ]'
+
+    new_world
+    started_issue 20
+    put_comment 20 7100 $'In review: #9.\n\n<!-- ticket.sh:review:9 -->' stranger
+    put_issue_body_append 20 "PR: #9"
+    t review 20 9
+    check "#70-AC4.6 a stranger's review marker is ignored: review moves the board and comments" bash -c '[ '"$rc"' -eq 0 ] && [ "'"$(board_of 20)"'" = "In review" ] && [ '"$(writes comment)"' -eq 1 ]'
+
+    new_world
+    spec_issue 20
+    put_issue_body_append 20 "Branch: feat/a-thing"
+    echo feat/a-thing >>"$STUB_DIR/branches"
+    link_branch 20 feat/a-thing
+    put_comment 20 7100 "Started on branch feat/a-thing." stranger
+    t start 20
+    check "#70-AC2.3 a stranger's Started on branch comment is ignored: start finishes the remaining steps" bash -c '[ '"$rc"' -eq 0 ] && [ '"$(writes comment)"' -eq 1 ] && ! grep -q "^already" <<<"$1"' _ "$out"
+
+    new_world
+    spec_issue 20
+    jq -c '.[0].user.login = "stranger"' "$STUB_DIR/comments/20.json" >"$STUB_DIR/c.tmp" && mv "$STUB_DIR/c.tmp" "$STUB_DIR/comments/20.json"
+    t start 20
+    check "#70-AC3.1 an approval comment by another account is refused" gate_refused
+
+    new_world
+    spec_issue 20 2099-01-01T00:00:00Z
+    t start 20
+    check "#70-AC3.1 an approval claiming a time later than the comment's own created_at is refused" gate_refused
+    check "#70-AC3.10 ... and the line says so" says "later than the comment"
+}
+
+test_linked_branch() {
+    new_world
+    spec_issue 20
+    echo feat/a-thing >>"$STUB_DIR/branches"
+    t start 20
+    check "#70-AC2.9 a branch of that name that is not linked to the issue is refused, naming it, no write" bash -c '[ '"$rc"' -eq 1 ] && grep -qF "feat/a-thing" <<<"$1" && grep -qi "not linked" <<<"$1" && [ '"$(all_writes)"' -eq 0 ]' _ "$out
+$err"
+
+    new_world
+    spec_issue 20
+    echo feat/a-thing >>"$STUB_DIR/branches"
+    link_branch 21 feat/a-thing
+    t start 20
+    check "#70-AC2.9 a branch linked to another issue is refused" bash -c '[ '"$rc"' -eq 1 ] && [ '"$(all_writes)"' -eq 0 ]'
+
+    new_world
+    spec_issue 20
+    echo feat/a-thing >>"$STUB_DIR/branches"
+    link_branch 20 feat/a-thing
+    t start 20
+    check "#70-AC2.6 a branch already linked to this issue is used (no second develop)" bash -c '[ '"$rc"' -eq 0 ] && [ '"$(writes develop)"' -eq 0 ]'
+}
+
+test_file_guards() {
+    file_body
+    new_world
+    put_issue 70 $'Epic: #62\n## Goal\nan approved spec\n' "ticket,type: feat" open 2026-01-01T00:00:00Z "feat(x): y"
+    t file --issue 70 --title "feat(x): y" --type feat --epic 62 --body-file "$work/body.md"
+    check "#70-AC4.6 --issue pointing at an issue with another body is refused, body untouched" bash -c '[ '"$rc"' -eq 1 ] && [ '"$(writes body)"' -eq 0 ]'
+    new_world
+    file_body
+    put_issue 70 "$(cat "$work/body.md")" "ticket,type: feat" open 2026-01-01T00:00:00Z "feat(other): title"
+    t file --issue 70 --title "feat(x): y" --type feat --epic 62 --body-file "$work/body.md"
+    check "#70-AC4.6 --issue with a different title is refused" bash -c '[ '"$rc"' -eq 1 ] && [ '"$(writes body)"' -eq 0 ]'
+    new_world
+    put_issue 70 "$(cat "$work/body.md")" "ticket,type: feat" open 2026-01-01T00:00:00Z "feat(x): y"
+    jq -c '.pull_request = {}' "$STUB_DIR/issue/70.json" >"$STUB_DIR/i.tmp" && mv "$STUB_DIR/i.tmp" "$STUB_DIR/issue/70.json"
+    t file --issue 70 --title "feat(x): y" --type feat --epic 62 --body-file "$work/body.md"
+    check "#70-AC4.6 --issue pointing at a pull request is refused" bash -c '[ '"$rc"' -eq 1 ] && [ '"$(writes body)"' -eq 0 ]'
+
+    # a lost create answer is recovered only by the issue this run created
+    new_world
+    put_issue 70 "$(cat "$work/body.md")" "ticket,type: feat" open 2026-01-01T00:00:00Z "feat(x): y"
+    fault 'api -X POST repos/rodgallert/Elysium/issues --input*' 99 502
+    t file --title "feat(x): y" --type feat --epic 62 --body-file "$work/body.md"
+    check "#70-AC4.6 the create really failed and an older issue has the same title and body: it is not adopted, exit 1" bash -c '[ '"$rc"' -eq 1 ] && [ '"$(writes body)"' -eq 0 ] && [ "$(jq -r .body "'"$STUB_DIR"'/issue/70.json")" = "$(cat "'"$work"'/body.md")" ]'
+    new_world
+    file_body
+    put_issue 70 "$(cat "$work/body.md")" "ticket,type: feat" open "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "feat(x): y"
+    jq -c '.pull_request = {}' "$STUB_DIR/issue/70.json" >"$STUB_DIR/i.tmp" && mv "$STUB_DIR/i.tmp" "$STUB_DIR/issue/70.json"
+    fault 'api -X POST repos/rodgallert/Elysium/issues --input*' 99 502
+    t file --title "feat(x): y" --type feat --epic 62 --body-file "$work/body.md"
+    check "#70-AC4.6 a recent pull request with the same title is not adopted" bash -c '[ '"$rc"' -eq 1 ] && [ '"$(writes body)"' -eq 0 ]'
+    new_world
+    file_body
+    fault 'api -X POST repos/rodgallert/Elysium/issues --input*' 1 502 after
+    t file --title "feat(x): y" --type feat --epic 62 --body-file "$work/body.md"
+    check "#70-AC5.7 the create's answer is lost after it took effect: the issue just created is recovered, one create" bash -c '[ '"$rc"' -eq 0 ] && [ '"$(writes create)"' -eq 1 ] && ! grep -qF "<issue>" <<<"$1"' _ "$(body_of 101)"
+}
+
+test_rate_limit_waits() {
+    new_world
+    spec_issue 20
+    fault "$(read_fault)" 99 rl-bare
+    t start 20
+    check "#70-AC5 a rate limit without a readable Retry-After or reset waits the 60 s cap before each retry" bash -c '[ '"$rc"' -ne 0 ] && [ "$(tr "\n" " " <"'"$STUB_DIR"'/sleeps")" = "60 60 60 " ] && grep -qi "rate limit" <<<"$1"' _ "$err"
+    new_world
+    spec_issue 20
+    fault "$(read_fault)" 99 rl-graphql
+    t start 20
+    check "#70-AC5 a GraphQL rate limit (no HTTP status) is retried and reported as a rate limit" bash -c '[ '"$rc"' -ne 0 ] && [ '"$(calls_like 'issues/20[[:space:]]*$')"' -eq 4 ] && grep -qi "rate limit" <<<"$1"' _ "$err"
+    new_world
+    spec_issue 20
+    fault "$(read_fault)" 1 429
+    t start 20
+    check "#70-AC5 a 429 is a rate limit: waits 60 s, then succeeds" bash -c '[ '"$rc"' -eq 0 ] && [ "$(cat "'"$STUB_DIR"'/sleeps")" = 60 ]'
+}
+
 # ---- #70-AC6: the skill and the docs --------------------------------------------------------------------------------
 
 test_ac6_docs() {
@@ -857,6 +1042,7 @@ for fn in test_ac1 test_ac1_1_inputs test_ac1_2_boundaries test_ac1_6_account te
     test_ac1_10_observability test_ac2_start test_ac2_1_inputs test_ac2_2_3_state test_ac2_5_concurrency test_ac2_6_partial \
     test_ac2_9_branch_names test_ac3_gate test_ac3_1_inputs test_ac3_2_boundaries test_ac3_4_time test_ac3_6_partial \
     test_ac3_9_query test_ac4_review test_ac4_ready test_ac4_done test_ac4_file test_ac5_retries test_ac5_4_timeout \
+    test_real_history test_trusted_comments test_linked_branch test_file_guards test_rate_limit_waits \
     test_ac5_5_isolation test_ac5_6_nth_call test_ac5_9_jq test_ac6_docs test_lint; do
     echo "== $fn"
     "$fn"
