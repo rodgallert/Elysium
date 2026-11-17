@@ -33,7 +33,7 @@ A **phase checkpoint** has no PR: when the phase's last ticket is done, review e
 
 Anything else (wrong base, a ticket into a release branch, `main` or a release branch as the head) is a **Must fix**.
 
-A PR is **docs-only** when every changed file is Markdown (`.md`), wherever it lives. Anything else under `.claude/` (settings, hooks, scripts) is code. Docs-only PRs skip the worktree build (section 2), the build and boundary lines of section 3, and the code review (section 5), and get a read-through instead. The build jobs don't run on Markdown-only changes, so a docs-only PR has no build to wait for (its `gate` check still reports and passes): don't list the missing build jobs as a finding. Every other check still applies: title, branch, issue link, roadmap boxes and repo hygiene.
+A PR is **docs-only** when every changed file is Markdown (`.md`), wherever it lives. Anything else under `.claude/` (settings, hooks, scripts) is code. Docs-only PRs skip the worktree build (section 2), the build and boundary lines of section 3, and the code review (section 5), and get a read-through instead. The build jobs don't run on Markdown-only changes, so a docs-only PR has no build to wait for (its `gate` check still reports and passes): don't list the missing build jobs as a finding. Every other check still applies: title, branch, issue link, roadmap boxes and repo hygiene, and the read-through checks that the PR meets its issue's numbered criteria.
 
 Read the rules **from the PR's own head branch**, since PRs can change them: `CLAUDE.md`, `ROADMAP.md`, `Docs/workflow.md`, `Docs/platform-design.md`, and the `CLAUDE.md` and decision log of every service the PR touches. If the PR depends on a rule that only exists on another unmerged branch, that's a finding (merge order), not something to assume.
 
@@ -60,7 +60,7 @@ docker run --rm -v "$WT":/src -w /src mcr.microsoft.com/dotnet/sdk:10.0 dotnet t
 
 Tests that need Postgres, RabbitMQ or Redis start them themselves (containers); if they can't run here, say so under "Not checked". For each frontend the PR touches: `npm ci && npm run build`, plus `npm run lint` when the app has a lint script.
 
-A known warning that the service's `CLAUDE.md` already lists is not a finding; any other new warning is. When done: `git -C $REPO worktree remove --force $WT`.
+A known warning that the service's `CLAUDE.md` already lists is not a finding; any other new warning is. Keep the worktree until the loosen-a-rule step in section 3 is done. When done: `git -C $REPO worktree remove --force $WT`.
 
 ## 3. Mechanical checks
 
@@ -71,8 +71,13 @@ Each failure is a **Must fix** unless noted.
 - **Branch name** follows `Docs/workflow.md` for its level. Type in the branch matches the type in the title.
 - **Issue link:** tickets say `Closes #<issue>` for every roadmap task they complete (Should fix if missing). Merges into `main` close them automatically; the reviewer only checks the links are there and point at the right tickets.
 - **Roadmap boxes:** the tasks the PR completes are ticked in `ROADMAP.md`; nothing is ticked that the code doesn't actually do yet.
+- **Spec and approval** (`Docs/workflow.md`, "Specs and tests"; spikes and releases are exempt, as are tickets the PO exempted on the issue; a docs-only ticket is read through against each numbered criterion; hotfixes and tickets filed before the rules need a spec too): the issue holds the spec with ids `#<issue>-AC<n>`, a per-category edge-case list (a case or `n/a: <reason>` each; you judge the reasons, and "covered elsewhere" must name the test), and an `Approved: <comment link>` line. Check that the approval comment predates the first commit authored on the branch (for a hotfix, a cherry-pick's original commit date doesn't count; use the date it was committed on the hotfix branch) and that no `Spec change:` comment lacks a later approval. Missing or late approval is a **Must fix**.
+- **Traceability:** the PR description maps every criterion id and every edge-case id to tests, and the tests cite their ids (`grep -rnF` with a closing delimiter so `AC2.1` doesn't match `AC2.10`, e.g. `grep -rnF '#64-AC2.1"'` for a quoted id, or a pattern ending in a non-digit). Any criterion or listed case with no test and no accepted `n/a` is a **Must fix**, per case: "happy path only" is the extreme of this, not a separate threshold. Without ids to map (a ticket exempted or filed before the rules), apply the same check against the PR's own description and the "Failure paths" item of "Before you open a PR".
+- **Test-first order:** run `git log --reverse --no-merges origin/main..HEAD`. The order is schema (when there is a contract), then the first test commit, then the implementation. Check out the first test commit in the scratch worktree, run the tests and record the failure message under "Checked": it must be an assertion failing, not a compile error or a missing stub; for compose and infrastructure, the smoke, lint or port check that fails on the old configuration; a bug fix starts with its reproduction test. CI on the branch tip (`gate`) is what counts, not CI on the first commit. A missed order is a **Must fix** that can't be repaired (no force-push, squash hides history): it is lifted only by the PO's explicit acknowledgement recorded on the PR. An API or message change without its schema before the handlers, or without contract tests, is a **Must fix** too.
 - **Breaking changes:** if the change forces a consumer of a service to change (an endpoint, field, status code or message contract changed or removed, token claims changed, a migration that drops or rewrites data, a renamed or removed config key or environment variable, a removed login method or permission), or rewrites code a finished scenario relies on (`Docs/workflow.md`, "Breaking changes"), the PR has a "## Breaking change" section and the linked issue a "Breaking change" note, both saying what can break and what to do, and the title and commit carry `!` and `BREAKING CHANGE:`. Anything missing is a **Must fix**.
 - **Repo hygiene:** no build output, no `.env` or other secrets, no credentials or tokens in code, tests or fixtures, no personal data in fixtures beyond obviously fake values.
+
+**Loosen a rule and see a test fail** (code, compose and infrastructure tickets): in the scratch worktree, pick one rule the change implements (remove a validation, widen a limit, drop an ownership or permission check, remove a unique constraint or idempotency guard; for compose and infrastructure drop a flag or a host binding), change it, run the tests or the check and confirm one fails, then discard the change (`git checkout -- .`). Never commit or push from the scratch worktree. Name the rule you loosened under "Checked". If everything still passes, the tests don't pin the rule: a **Must fix**. If no rule can be loosened (a visual rule, a CI setting), say why and name the check that would catch it. Docs-only PRs skip this.
 
 ## 4. Roadmap and design check
 
@@ -151,7 +156,7 @@ Each finding names the file and line, says what is wrong, and why it matters. On
 - #<issue>: summary
 
 **Checked**
-- Build: ... · Tests: ... · Boundary check: ... · CI: ... · Title and branch: ... · Issue link: ... · Roadmap: ... · Security: ...
+- Build: ... · Tests: ... · Spec and approval: ... · Traceability: ... · Test-first order (first test commit and its failure): ... · Loosened rule: ... · Boundary check: ... · CI: ... · Title and branch: ... · Issue link: ... · Roadmap: ... · Security: ...
 
 **Not checked**
 - ... (e.g. behaviour on the running stack, with what to try and what to expect)
