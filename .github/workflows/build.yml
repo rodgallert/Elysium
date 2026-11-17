@@ -278,6 +278,8 @@ jobs:
         run: tools/tests/ci-tools.sh
       - name: Prince .env check tests
         run: tools/tests/env-check.sh
+      - name: Ticket script tests
+        run: tools/tests/ticket-tools.sh
       - name: Every job did what this change calls for
         env:
           NEEDS: ${{ toJSON(needs) }}
