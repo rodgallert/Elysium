@@ -276,6 +276,8 @@ jobs:
           persist-credentials: false
       - name: Gate fixture tests
         run: tools/tests/ci-tools.sh
+      - name: Prince .env check tests
+        run: tools/tests/env-check.sh
       - name: Every job did what this change calls for
         env:
           NEEDS: ${{ toJSON(needs) }}
