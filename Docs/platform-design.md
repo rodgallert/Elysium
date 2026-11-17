@@ -433,6 +433,7 @@ The phases and their tasks are in `ROADMAP.md`; this is the short version.
 ```
 Elysium/
 ├── docker-compose.yml        # the whole ecosystem
+├── Edge/                     # edge proxy for local running (Docs/environments-design.md)
 ├── Keeper/                   # gateway (replaces Prince's nginx)
 ├── Masquerade/               # accounts: own solution, Dockerfile, CLAUDE.md, CHANGELOG
 ├── Harpy/                    # ledger (later)
@@ -445,7 +446,7 @@ Elysium/
 Each service folder is self-contained (solution, Dockerfile, `CLAUDE.md`, `CHANGELOG.md`). Prince's
 sign-in, personal-data and balance code moves out to Masquerade and Harpy as those are built.
 
-For local running, the root `docker-compose.yml` is two Compose projects (`elysium-prod` and `elysium-dev`) behind one edge proxy; `Docs/environments-design.md` records that design and the names the root compose file must keep.
+For local running, the ecosystem runs as two Compose projects (`elysium-prod` and `elysium-dev`) plus the edge proxy's own project, which lives in its own `Edge/` folder; which files define them is left to the prod/dev stacks ticket (#76), and `docker-compose.prod.yml` keeps meaning the production image pins. `Docs/environments-design.md` records the design and the names the root compose file must keep.
 
 ## 18. Hostnames — **Decided**
 

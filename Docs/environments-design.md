@@ -13,7 +13,9 @@ for good; TLS and real-domain naming are deferred.
 
 **Decision.** There are two full stacks, one Compose project each: `elysium-prod` and `elysium-dev`.
 The project names are fixed in the Compose files (`name:`), never derived from the folder name, and
-service names stay unchanged between the two.
+service names stay unchanged between the two. Which files define the two
+projects is left to the prod/dev stacks ticket (#76); `docker-compose.prod.yml` keeps meaning the
+list of production image pins.
 
 **Why.** One project per environment gives each its own containers, networks and volumes by
 construction, so "dev can't touch prod" is a property of Compose, not of a naming habit. Fixed names
@@ -39,8 +41,8 @@ key, Redis, RabbitMQ, Postgres or Silo, and the edge proxy never joins a data-st
 (section 3). A token issued by dev is rejected by production: production checks `iss` and `aud`
 against its own values (`Docs/platform-design.md` §20: every service validates tokens itself).
 
-**Production is the default (#69-AC1.9).** When the environment setting (`ENVIRONMENT_NAME`, and
-`ASPNETCORE_ENVIRONMENT` derived from it) is unset, a service behaves as production. `Development`
+**Production is the default (#69-AC1.9).** When the environment setting is unset (`ASPNETCORE_ENVIRONMENT`, its own variable per
+environment, and likewise `ENVIRONMENT_NAME`), a service behaves as production. `Development`
 behaviour (developer error pages, relaxed settings) only ever runs behind loopback, on the dev stack.
 
 ## 2. Hostnames
@@ -66,7 +68,7 @@ added here. Masquerade and Keeper adopt the names with #27 (section 9); Prince g
 ## 3. Edge proxy
 
 **Decision.** One edge proxy, the only piece shared between the environments. It lives in its own
-folder outside `Prince/` (`Edge/`), owns the host ports, and each stack's entry proxy joins the
+folder outside `Prince/` (`Edge/`, the location in the approved spec of #75), owns the host ports, and each stack's entry proxy joins the
 external Docker network `elysium-edge`; stacks publish no host ports of their own.
 
 - It binds `127.0.0.1` and `[::1]` explicitly, never `0.0.0.0` or `::`.
@@ -94,7 +96,7 @@ secret and key is different, and the example files say so.
 
 Keys are platform-named (`ENVIRONMENT_NAME`, `PUBLIC_HOST`, `PUBLIC_URL`, `POSTGRES_PASSWORD`,
 `SILO_ROOT_PASSWORD`, the image tag or digest); per-app keys are prefixed (`PRINCE_`).
-`ASPNETCORE_ENVIRONMENT` is a variable too. A missing or malformed key is refused by `env-check`
+`ASPNETCORE_ENVIRONMENT` is its own variable per environment, not derived from another key; when it is unset a service behaves as production. A missing or malformed key is refused by `env-check`
 before any container starts.
 
 **Why.** One file per environment makes "which values does this stack run with" one answer, and
@@ -251,7 +253,8 @@ This list is the Done-when of "the first shared-service compose". Every entry mu
 
 Ticket #27 (the root `docker-compose.yml` and hostnames) must not contradict these. Each name is
 either **fixed now** (#27 keeps it) or **may change with #27** (#27 may change it deliberately, with a
-breaking-change note in its issue and PR, `Docs/workflow.md`, "Breaking changes").
+breaking-change note in its issue and PR, `Docs/workflow.md`, "Breaking changes"). Today every row is
+fixed; the second category is kept for names added later.
 
 | Name | Status | Note |
 |---|---|---|
@@ -261,13 +264,13 @@ breaking-change note in its issue and PR, `Docs/workflow.md`, "Breaking changes"
 | Env files `.env.prod`, `.env.dev` | fixed now | examples committed |
 | Hostnames in section 2 | fixed now | #27 adopts them for Masquerade and Keeper |
 | Label `elysium.needs` | fixed now | format in section 8 |
-| Image names `elysium-<service>-<component>` | may change with #27 | as produced by `tools/list-images.sh`; that script, `tools/release-parts.sh` and `tools/check-prod-pins.sh` must be extended for a root compose file (today `list-images.sh` refuses one) |
-| Prince's Compose service names: `core-api`, `checkout-api`, `jobs-api`, `core-web-vue`, `checkout-web-vue`, `core-web-react`, `checkout-web-react`, `postgres`, `file-storage`, `file-storage-init`, `env-check`, `reverse-proxy` | may change with #27 | image names derive from them, so a rename is a breaking change for the pins in `docker-compose.prod.yml` |
+| Image names `elysium-<service>-<component>` | fixed now | today's names (the table in `Docs/workflow.md`, "Development images") stay byte for byte when #27 adds the root compose file. `tools/list-images.sh`, `tools/release-parts.sh` and `tools/check-prod-pins.sh` are extended to produce them from a root file (service = the first folder of each build context; an `include:`d service counts once; today `list-images.sh` refuses a root file). A rename is out of scope for #27: it would be its own breaking change and would redo the make-public-and-link step for each package |
+| Prince's Compose service names: `core-api`, `checkout-api`, `jobs-api`, `core-web-vue`, `checkout-web-vue`, `core-web-react`, `checkout-web-react`, `postgres`, `file-storage`, `file-storage-init`, `env-check`, `reverse-proxy` | fixed now | the image name's `<component>` is the Compose service name, so a rename breaks the pins in `docker-compose.prod.yml`. To rename one, first decouple the image name from the service name and keep the image names |
 
 ## 10. Test debt moved out
 
 These are not tested in the Environments phase. Each is written as skipped cases that name their
-precondition, and tracked in `ROADMAP.md`:
+precondition, and recorded in the "Moved out" paragraph of the Environments phase in `ROADMAP.md` (the Phase 1 section gets its own entry with the Phase 1 tickets):
 
 - token rejected across environments (a dev token gets `401` from production), CORS and sign-in
   isolation: **Phase 1** test debt; the precondition is a running Masquerade with sign-in, which
