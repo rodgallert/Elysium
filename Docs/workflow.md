@@ -60,7 +60,8 @@ The `publish` job in `.github/workflows/build.yml` publishes the development ver
 ## Issues, epics and milestones
 
 - **A ticket is one task from `ROADMAP.md`**: one checkbox, or a checkbox plus its sub-items when they only make sense together. Work that isn't a roadmap task (CI, tooling, workflow docs) is a ticket too, under the "Workflow and tooling" epic. The branch type is the Conventional Commit type of the work (`feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`).
-- **Every ticket has a GitHub issue** (label `ticket`), grouped under an **epic** issue per phase. **There is one milestone per release of a release part**, because each part has its own version, tag and GitHub Release (see "Versions and release parts"). A milestone is named after its part and version: "Masquerade v0.1" for a service that is one part, "Prince API v0.1" for one of the parts a service declares. A ticket belongs to the milestone of the part release it ships in. **Work that changes more than one release part is split into one ticket per part**, each in its own part's milestone: an issue has only one milestone, and the split keeps one ticket = one task and each part's milestone and changelog accurate. A ticket's PR description says `Closes #<issue>` for each task it completes; merges into `main` close them automatically.
+- **Every ticket has a GitHub issue** (label `ticket`), grouped under an **epic** issue (see the next bullet). **There is one milestone per release of a release part**, because each part has its own version, tag and GitHub Release (see "Versions and release parts"). A milestone is named after its part and version: "Masquerade v0.1" for a service that is one part, "Prince API v0.1" for one of the parts a service declares. A ticket belongs to the milestone of the part release it ships in. **Work that changes more than one release part is split into one ticket per part**, each in its own part's milestone: an issue has only one milestone, and the split keeps one ticket = one task and each part's milestone and changelog accurate. A ticket's PR description says `Closes #<issue>` for each task it completes; merges into `main` close them automatically.
+- **An epic is either a roadmap phase or a standing epic.** A phase epic is one phase of `ROADMAP.md`: it has a checkpoint and a `phase-<n>-done` tag (see "Phases"). A standing epic (for example "Hardening" or "Workflow and tooling") groups ongoing work that isn't a roadmap phase: it never reaches a checkpoint, gets no tag, and closes only when the PO closes it. An epic can span several sprints (see "Sprints").
 - The milestone table in `ROADMAP.md` decides which phases and tickets belong to which part release.
 - **Every ticket is filed from the issue template** (`.github/ISSUE_TEMPLATE/ticket.md`) and carries its spec (see "Specs and tests"). Its first line is `Epic: #<n>`; the start step adds `Branch: <branch>` and the review step `PR: #<n>` at the end. A ticket's acceptance criteria take the place of a "Done when"; only phases and the roadmap keep a **Done when**.
 
@@ -122,10 +123,39 @@ Every merge is a GitHub pull request, and every merge is a **squash**: one commi
 
 ## Phases
 
-A phase has no branch: its tickets merge into `main` like any other. A phase is its **epic** on the project board, plus a **checkpoint** when its last ticket is done:
+A phase has no branch: its tickets merge into `main` like any other. A phase is its **epic** (a phase epic; standing epics have no checkpoint) on the project board, plus a **checkpoint** when its last ticket is done:
 1. Review the phase as a whole: everything that changed in `main` since the previous checkpoint tag, against the phase's roadmap section.
 2. The PO checks the phase's **Done when** on a running stack (`docker compose up`), on a specific `main` commit. Note that commit's hash when asking for the check, because `main` keeps moving.
 3. Tag **the commit that was checked** `phase-<n>-done` (an annotated tag) and close the epic.
+
+## Sprints
+
+A sprint is a goal-based commitment of tickets, separate from epics: it can take tickets from several epics, and an epic can span several sprints. Phases, epics and milestones work as described above and don't change.
+
+- **Planning.** A planning meeting sets the sprint's **goal**, its **commitment list** (what the sprint promises) and its **stretch list** (what is done only if the commitment finishes early), and names each ticket's edge cases before the ticket is filed (see "Specs and tests"). It also notes a **soft time box**. The sprint starts on the PO's go, and only then.
+- **Sprint issue.** Each sprint has an issue (label `sprint`, filed by hand like epics) holding its goal, commitment, stretch and outcome. It is where the goal, every scope change and the outcome can be read later.
+- **Board.** A ticket is in at most one sprint, shown by the board's **Sprint** field (a single-select field with one option per sprint; the sprint is goal-based, so it isn't an Iteration field). Stretch tickets also carry the `stretch` label. A ticket with no Sprint value is in no sprint and shows in neither sprint view. Two views show the current sprint: **Current sprint** (a table) and **Sprint board** (a kanban board grouped by Status). Both are filtered on the current sprint's value (`sprint:"Sprint 1"`). Only one sprint is current at a time. Both views sort by the board's **Priority** field (P0 highest to P3).
+- **Priority.** Every sprint ticket has a Priority set at planning, and work takes the highest-priority **Ready** ticket first.
+- **Next sprint.** To point the views at the next sprint, add its option to the Sprint field (follow the save/check procedure in the `ticket-flow` skill, so existing values aren't lost), then edit each view's filter to the new value. Do this when the next sprint starts.
+- **Statuses within a sprint.** The board's Status column means:
+
+  | Status | In a sprint |
+  |---|---|
+  | Backlog | Not in the current sprint |
+  | Ready | In the current sprint, work not started (every committed and stretch ticket not yet started is moved here when the sprint starts) |
+  | In progress | Active work |
+  | In review | Finished, under review |
+  | Ready to Merge | Approved, ready to merge |
+  | Done | Merged |
+
+  Only tickets with approved specs are committed. A sprint ticket that fails the spec gate when it starts stays in Ready with a comment saying what is missing (re-approval needed), so it isn't dropped from the sprint.
+- **Time box.** Passing the soft time box triggers a check-in with the PO, never an automatic close.
+- **Unplanned work.** Work that appears during a sprint (a hotfix, a bug found in a review) joins the current sprint only with the PO's OK, recorded on the sprint issue; otherwise it goes to Backlog.
+- **Permissions.** Only the PO starts a sprint (the go), changes its commitment and closes it; the bookkeeping records each change on the sprint issue.
+- **Closing.** The sprint closes at a **sprint review**: the PO's manual check of the sprint's goal, with every committed ticket done or carried over by the PO's decision. The outcome is written on the sprint issue, which is then closed.
+  - A committed ticket that isn't done is carried over only by the PO's decision: its Sprint value changes to the next sprint, it keeps its Status, its Priority is raised one level at the next planning (P0 stays P0) unless the PO sets otherwise, and the sprint issue records it.
+  - If the commitment is done while stretch tickets are still open, the sprint closes and each unfinished stretch ticket carries over to the next sprint by default (Sprint value changes, Status kept); the next planning decides again whether it is committed or stretch, and a ticket promoted to committed loses the `stretch` label.
+  - Only the PO sends a sprint ticket back to Backlog. A ticket returned to Backlog has its Sprint value cleared and loses the `stretch` label.
 
 ## Reviews
 
