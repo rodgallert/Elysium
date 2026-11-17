@@ -118,7 +118,7 @@ api() {
     done
     path="${path%%\?*}"
     case "$path" in
-        user) echo "rodgallert" ;;
+        user) echo '{"login":"rodgallert"}' ;;
         graphql)
             local v q="" number="" cursor=""
             for v in "${vars[@]}"; do
@@ -201,10 +201,10 @@ case "$1" in
     api) out=$(api "$@") || exit $? ;;
     project)
         case "$2" in
-            list) out=$(echo '{"projects":[{"title":"Elysium","number":1}]}' | jq -r "${*#*--jq }") ;;
+            list) out=$(echo '{"projects":[{"title":"Elysium","number":1}]}' | jq -r "${joined#*--jq }") ;;
             view) out="PVT_1" ;;
             field-list)
-                out=$(jq -n --arg s "$statuses" '{fields:[{name:"Status",id:"F1",options:($s|split("|")|map({name:., id:("opt-" + (. | gsub(" ";"-")))}))}]}' | jq -r "${*#*--jq }")
+                out=$(jq -n --arg s "$statuses" '{fields:[{name:"Status",id:"F1",options:($s|split("|")|map({name:., id:("opt-" + (. | gsub(" ";"-")))}))}]}' | jq -r "${joined#*--jq }")
                 ;;
             item-add)
                 url=""

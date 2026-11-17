@@ -63,7 +63,7 @@ put_edits() { echo "$2" >"$STUB_DIR/edits/$1.json"; }
 fault() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "${4:-}" >>"$STUB_DIR/faults"; }
 # spec_issue <n> [approval time] [extra body lines]: an approved spec; created 2026-01-01, approved 2026-01-02
 spec_issue() {
-    local n="$1" at="${2-2026-01-02T00:00:00Z}" body
+    local n="$1" at="${2:-2026-01-02T00:00:00Z}" body
     printf -v body 'Epic: #62\n\n## Goal\nA goal.\n\n## Out of scope\nNone.\n%s\nApproved: https://github.com/%s/issues/%s#issuecomment-5001\n' "${3-}" "$repo" "$n"
     put_issue "$n" "$body"
     put_comment "$n" 5001 "Issue last edited $at"
@@ -162,7 +162,7 @@ test_ac1_1_inputs() {
     local hostile
     for hostile in '-x' 'feat/a b' 'feat/x..y' 'x/refs/heads/y' 'feat/$(id)'; do
         new_world
-        spec_issue 20 "" "Branch: $hostile"
+        spec_issue 20
         put_issue_body_append 20 "Branch: $hostile"
         t start 20
         check "#70-AC1.1 Branch: '$hostile' in the body is rejected (exit 1, no write)" bash -c '[ '"$rc"' -eq 1 ] && [ '"$(all_writes)"' -eq 0 ]'
@@ -458,7 +458,7 @@ test_ac3_1_inputs() {
     check "#70-AC3.1 Approved: link naming another issue number: refused" gate_refused
 
     new_world
-    spec_issue 20 "" ""
+    spec_issue 20
     jq -c '.body |= sub("Approved: .*\n$"; "Approved: soon\n")' "$STUB_DIR/issue/20.json" >"$STUB_DIR/i.tmp" && mv "$STUB_DIR/i.tmp" "$STUB_DIR/issue/20.json"
     t start 20
     check "#70-AC3.1 Approved: that is not a URL: refused" gate_refused
@@ -584,7 +584,7 @@ test_ac4_review() {
 
     new_world
     started_issue 20
-    fault '*comments*' 1 502 after
+    fault '*-X POST*comments*' 1 502 after
     t review 20 9
     check "#70-AC4.6 the comment's answer is lost after it was posted: the retry posts no second comment" bash -c '[ '"$rc"' -eq 0 ] && [ '"$(writes comment)"' -eq 1 ]'
 }
@@ -696,7 +696,8 @@ $err"
     new_world
     printf 'Epic: #62\n\n## Goal\nNo placeholders.\n' >"$work/body.md"
     t file --title "feat(x): y" --type feat --epic 62 --body-file "$work/body.md"
-    check "#70-AC4.2 a body with no placeholders is created as is" bash -c '[ '"$rc"' -eq 0 ] && [ "$(body_of 101)" = "$(cat "'"$work"'/body.md")" ]'
+    check "#70-AC4.2 a body with no placeholders is created as is, without an edit" bash -c '[ '"$rc"' -eq 0 ] && [ '"$(writes body)"' -eq 0 ]'
+    check "#70-AC4.2 ... and its text is unchanged" eq "$(body_of 101)" "$(cat "$work/body.md")"
 
     new_world
     { printf 'Epic: #62\n\n'; for _ in $(seq 200); do printf -- '- **#<issue>-AC1:** x\n'; done; } >"$work/body.md"
@@ -733,7 +734,7 @@ test_ac5_retries() {
     check "#70-AC5.2 failing 4 times: non-zero exit, step and HTTP status named" bash -c '[ '"$rc"' -ne 0 ] && grep -qF "502" <<<"$1" && grep -qi "read" <<<"$1"' _ "$err"
     check "#70-AC5.10 the failure line holds neither the token nor the body" bash -c '! grep -qF "A goal." <<<"$1" && ! grep -qF "'"$owner_token"'" <<<"$1"' _ "$out
 $err"
-    check "#70-AC5.2 exactly 4 attempts" eq "$(calls_like 'issues/20$')" 4
+    check "#70-AC5.2 exactly 4 attempts" eq "$(calls_like 'issues/20[[:space:]]*$')" 4
 
     new_world
     spec_issue 20
@@ -761,13 +762,13 @@ $err"
     spec_issue 20
     fault "$(read_fault)" 99 404
     t start 20
-    check "#70-AC5 a 404 is reported as not found and is not retried" bash -c '[ '"$rc"' -ne 0 ] && grep -qi "not found" <<<"$1" && [ '"$(calls_like 'issues/20$')"' -eq 1 ]' _ "$err"
+    check "#70-AC5 a 404 is reported as not found and is not retried" bash -c '[ '"$rc"' -ne 0 ] && grep -qi "not found" <<<"$1" && [ '"$(calls_like 'issues/20[[:space:]]*$')"' -eq 1 ]' _ "$err"
 
     new_world
     spec_issue 20
     fault "$(read_fault)" 99 perm
     t start 20
-    check "#70-AC5.8 a 403 permission error is not retried and says so" bash -c '[ '"$rc"' -ne 0 ] && grep -qi "permission" <<<"$1" && ! grep -qi "rate limit" <<<"$1" && [ '"$(calls_like 'issues/20$')"' -eq 1 ]' _ "$err"
+    check "#70-AC5.8 a 403 permission error is not retried and says so" bash -c '[ '"$rc"' -ne 0 ] && grep -qi "permission" <<<"$1" && ! grep -qi "rate limit" <<<"$1" && [ '"$(calls_like 'issues/20[[:space:]]*$')"' -eq 1 ]' _ "$err"
 }
 
 test_ac5_4_timeout() {
@@ -776,7 +777,7 @@ test_ac5_4_timeout() {
     TT=1
     fault "$(read_fault)" 1 hang
     t start 20
-    check "#70-AC5.4 a hanging gh call is killed after the timeout and counted as a failed attempt; the next succeeds" bash -c '[ '"$rc"' -eq 0 ] && [ '"$(calls_like 'issues/20$')"' -eq 2 ]'
+    check "#70-AC5.4 a hanging gh call is killed after the timeout and counted as a failed attempt; the next succeeds" bash -c '[ '"$rc"' -eq 0 ] && [ '"$(calls_like 'issues/20[[:space:]]*$')"' -eq 2 ]'
     new_world
     spec_issue 20
     TT=1
@@ -797,7 +798,7 @@ test_ac5_5_isolation() {
         TICKET_LOCK_DIR="$STUB_DIR/locks" bash "$script" start 21 >"$work/o6" 2>"$work/e6" </dev/null &
     local p2=$!
     wait "$p1" "$p2"
-    check "#70-AC5.5 the issue that was not rate limited is unaffected and ran each step once" bash -c '[ "'"$(board_of 21)"'" = "In progress" ] && [ '"$(writes develop)"' -eq 0 ] || [ '"$(writes develop)"' -eq 1 ]'
+    check "#70-AC5.5 the issue that was not rate limited is unaffected and ran each step once" bash -c '[ "'"$(board_of 21)"'" = "In progress" ] && [ '"$(writes develop)"' -eq 1 ] && [ '"$(writes comment)"' -eq 1 ]'
     check "#70-AC5.5 the rate limited one made no write" bash -c '[ "'"$(board_of 20)"'" = none ]'
 }
 
@@ -846,7 +847,7 @@ test_ac6_docs() {
 
 test_lint() {
     if command -v shellcheck >/dev/null; then
-        check "#70-AC6 shellcheck: script, library, test file and stub" shellcheck "$script" "$tools/gh-lib.sh" "$tools/tests/ticket-tools.sh" "$stubs/gh"
+        check "#70-AC6 shellcheck: script, library, test file and stub" shellcheck -x "$script" "$tools/gh-lib.sh" "$tools/tests/ticket-tools.sh" "$stubs/gh"
     else
         echo "note: shellcheck is not installed here; run it on the script, library, test file and stub (CI image has it)"
     fi
