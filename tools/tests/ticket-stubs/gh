@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+# Test stub of `gh` for tools/tests/ticket-tools.sh (and the follow-up script tests that reuse this harness): a small
+# fake of the GitHub REST and GraphQL calls the ticket scripts make, with its state in files under $STUB_DIR.
+# Every call is recorded in $STUB_DIR/calls.log (token, then each argument, tab separated) and every write in
+# $STUB_DIR/writes.log. It never reaches GitHub, and it refuses to run outside the tests.
+#
+# State ($STUB_DIR): issue/<n>.json (REST shape), comments/<n>.json (with user and created_at), edits/<n>.json (userContentEdits
+# nodes, newest first, each `diff` the whole body of that revision as GitHub returns it), linked (issue<TAB>branch),
+# pr/<n>.json, branches (one name per line), board/<n> (Status), faults, failnth.
+# Faults, one per line in $STUB_DIR/faults: <glob over the joined arguments><TAB><times><TAB><mode>[<TAB>after]
+#   modes: 502, rl-secondary:<seconds>, rl-primary, perm, 404, hang. With "after" the call's effect happens first and
+#   the failure is reported anyway (a request that succeeded but whose answer was lost).
+# $STUB_DIR/failnth holds N: from the Nth call on, every call fails with a 502 (an outage that starts there).
+# shellcheck disable=SC2016,SC2295 # jq programs and path patterns are literal on purpose
+set +x # a caller's xtrace must not print the token
+[ "${TICKET_TOOLS_TEST:-}" = 1 ] || { echo "tools/tests/ticket-stubs/gh is a test stub" >&2; exit 99; }
+[ -n "${STUB_DIR:-}" ] && [ -d "$STUB_DIR" ] || { echo "stub gh: STUB_DIR is not a directory" >&2; exit 99; }
+cd "$STUB_DIR" || exit 99
+set -o pipefail
+owner_token="gho_stubOwnerToken0001"
+active_token="gho_stubActiveToken9999"
+other_token="gho_stubOtherUser00003"
+repo="rodgallert/Elysium"
+
+if [ "${1:-}" = --version ]; then
+    echo "gh version ${STUB_GH_VERSION:-2.97.0} (2026-07-31)"
+    exit 0
+fi
+
+exec 8>"$STUB_DIR/.lock"
+flock 8
+printf '%s\t' "${GH_TOKEN:-none}" "$@" >>calls.log
+echo >>calls.log
+joined="$*"
+
+fail() { # <mode>: the way a failing gh call looks
+    case "$1" in
+        502) echo "gh: Bad Gateway (HTTP 502)" >&2 ;;
+        rl-secondary:*) printf 'gh: You have exceeded a secondary rate limit (HTTP 403)\nRetry-After: %s\n' "${1#rl-secondary:}" >&2 ;;
+        rl-bare) echo "gh: API rate limit exceeded (HTTP 403)" >&2 ;; # what gh prints: no header lines
+        rl-graphql) echo "GraphQL: API rate limit already exceeded for user ID 1." >&2 ;; # HTTP 200, no status
+        429) echo "gh: Too Many Requests (HTTP 429)" >&2 ;;
+        rl-primary) printf 'gh: API rate limit exceeded (HTTP 403)\nx-ratelimit-remaining: 0\nx-ratelimit-reset: %s\n' "$(($(date +%s) + 20))" >&2 ;;
+        perm) echo "gh: Resource not accessible by personal access token (HTTP 403)" >&2 ;;
+        404) echo "gh: Not Found (HTTP 404)" >&2 ;;
+        401) echo "gh: Bad credentials (HTTP 401)" >&2 ;;
+        hang)
+            exec 8>&-
+            exec sleep 100
+            ;;
+    esac
+    exit 1
+}
+
+case "$1 $2" in
+    "auth token")
+        if [ "${3:-}" = --user ] && [ "${4:-}" = rodgallert ] && [ -z "${STUB_NO_OWNER:-}" ]; then
+            echo "$owner_token"
+            exit 0
+        fi
+        [ "${3:-}" = --user ] && { echo "no oauth token found for ${4:-}" >&2; exit 1; }
+        echo "$active_token"
+        exit 0
+        ;;
+    "auth switch") exit 0 ;;
+esac
+
+# Every other call must carry the owner's token (a preset token of another login may only ask who it is)
+if [ "${GH_TOKEN:-}" = "$other_token" ] && [ "$1 $2" = "api user" ]; then
+    echo "someone-else"
+    exit 0
+fi
+[ "${GH_TOKEN:-}" = "$owner_token" ] || fail 401
+
+mode=""
+when=before
+lineno=0
+if [ -f faults ]; then
+    while IFS=$'\t' read -r glob times fmode fwhen; do
+        lineno=$((lineno + 1))
+        # shellcheck disable=SC2053 # the glob is the point
+        [[ $joined == $glob ]] || continue
+        used=$(cat "faults.used.$lineno" 2>/dev/null || echo 0)
+        [ "$used" -lt "$times" ] || continue
+        echo $((used + 1)) >"faults.used.$lineno"
+        mode="$fmode"
+        [ "$fwhen" = after ] && when=after
+        break
+    done <faults
+fi
+if [ -z "$mode" ] && [ -f failnth ] && [ "$(wc -l <calls.log)" -ge "$(cat failnth)" ]; then
+    mode=502
+fi
+[ -n "$mode" ] && [ "$when" = before ] && fail "$mode"
+
+write() { echo "$1" >>writes.log; }
+getissue() { jq -c . "issue/$1.json"; }
+setissue() { # <n> <jq filter...>
+    local n="$1"
+    shift
+    jq -c "$@" "issue/$n.json" >"issue/$n.tmp" && mv "issue/$n.tmp" "issue/$n.json"
+}
+statuses="Backlog|Ready|In progress|In review|Ready to Merge|Done"
+
+# api <path> [-X METHOD] [--input FILE] [-F|-f key=value]... [--paginate] [-q|--jq expr]
+api() {
+    # the first argument is "api"
+    local method=GET path="" input="" jqexpr="" i=0
+    local -a vars=()
+    local -a rest=("${@:2}")
+    while [ "$i" -lt "${#rest[@]}" ]; do
+        case "${rest[$i]}" in
+            -X) method="${rest[$((i + 1))]}"; i=$((i + 1)) ;;
+            --input) input="${rest[$((i + 1))]}"; i=$((i + 1)) ;;
+            -F | -f) vars+=("${rest[$((i + 1))]}"); i=$((i + 1)) ;;
+            -q | --jq) jqexpr="${rest[$((i + 1))]}"; i=$((i + 1)) ;;
+            --paginate) ;;
+            *) [ -n "$path" ] || path="${rest[$i]}" ;;
+        esac
+        i=$((i + 1))
+    done
+    path="${path%%\?*}"
+    case "$path" in
+        user) echo '{"login":"rodgallert"}' ;;
+        graphql)
+            local v q="" number="" cursor=""
+            for v in "${vars[@]}"; do
+                case "$v" in
+                    query=@*) q="${v#query=@}" ;;
+                    number=*) number="${v#number=}" ;;
+                    cursor=*) cursor="${v#cursor=}" ;;
+                esac
+            done
+            cp "$q" query.txt
+            jq -c --argjson start "${cursor:-0}" --argjson size "${STUB_PAGE:-100}" \
+                '{data:{repository:{issue:{userContentEdits:{
+                    pageInfo:{hasNextPage: (($start + $size) < length), endCursor: (($start + $size) | tostring)},
+                    nodes: .[$start:($start + $size)]}}}}}' "edits/$number.json" 2>/dev/null ||
+                echo '{"data":{"repository":{"issue":{"userContentEdits":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}'
+            ;;
+        "repos/$repo/issues/"*/comments)
+            local n="${path#repos/$repo/issues/}"
+            n="${n%/comments}"
+            if [ "$method" = POST ]; then
+                write comment
+                local id=$((6000 + $(jq length "comments/$n.json")))
+                jq -c --argjson id "$id" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg url "https://api.github.com/repos/$repo/issues/$n" --slurpfile i "$input" \
+                    '. + [{id:$id, body:$i[0].body, issue_url:$url, user:{login:"rodgallert"}, created_at:$now}]' "comments/$n.json" >"comments/$n.tmp" && mv "comments/$n.tmp" "comments/$n.json"
+                echo "{\"id\":$id}"
+            else
+                jq -c . "comments/$n.json" 2>/dev/null || echo "[]"
+            fi
+            ;;
+        "repos/$repo/issues/"*/assignees)
+            local n="${path#repos/$repo/issues/}"
+            n="${n%/assignees}"
+            write assign
+            setissue "$n" --slurpfile i "$input" '.assignees = ((.assignees + [$i[0].assignees[] | {login: .}]) | unique)'
+            getissue "$n"
+            ;;
+        "repos/$repo/issues/"*)
+            local n="${path#repos/$repo/issues/}"
+            [ -f "issue/$n.json" ] || fail 404
+            if [ "$method" = PATCH ]; then
+                if jq -e 'has("body")' "$input" >/dev/null; then write body; fi
+                if jq -e 'has("state")' "$input" >/dev/null; then write close; fi
+                setissue "$n" --slurpfile i "$input" '. * $i[0]'
+            fi
+            getissue "$n"
+            ;;
+        "repos/$repo/issues")
+            if [ "$method" = POST ]; then
+                write create
+                local n=$(($(cat next-issue 2>/dev/null || echo 100) + 1))
+                echo "$n" >next-issue
+                jq -c --argjson n "$n" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg url "https://github.com/$repo/issues/$n" --slurpfile i "$input" \
+                    '{number:$n, state:"open", title:$i[0].title, body:$i[0].body, labels:[$i[0].labels[] | {name:.}], assignees:[],
+                      milestone:$i[0].milestone, created_at:$now, updated_at:$now, html_url:$url}' >"issue/$n.json" <<<null
+                echo '[]' >"comments/$n.json"
+                getissue "$n"
+            else
+                jq -sc 'sort_by(-.number)' issue/*.json
+            fi
+            ;;
+        "repos/$repo/milestones") echo '[{"number":3,"title":"Workflow v1"},{"number":4,"title":"Masquerade v0.1"}]' ;;
+        "repos/$repo/pulls/"*)
+            local n="${path#repos/$repo/pulls/}"
+            [ -f "pr/$n.json" ] || fail 404
+            jq -c . "pr/$n.json"
+            ;;
+        "repos/$repo/git/ref/heads/"*)
+            grep -qxF "${path#repos/$repo/git/ref/heads/}" branches 2>/dev/null || fail 404
+            echo '{"ref":"ok"}'
+            ;;
+        *)
+            echo "stub gh: unexpected api path: $path" >&2
+            exit 99
+            ;;
+    esac | { if [ -n "$jqexpr" ]; then jq -r "$jqexpr"; else cat; fi; }
+}
+
+# project ... and issue ...: what tools/board.sh and `gh issue develop` need
+case "$1" in
+    api) out=$(api "$@") || exit $? ;;
+    project)
+        case "$2" in
+            list) out=$(echo '{"projects":[{"title":"Elysium","number":1}]}' | jq -r "${joined#*--jq }") ;;
+            view) out="PVT_1" ;;
+            field-list)
+                out=$(jq -n --arg s "$statuses" '{fields:[{name:"Status",id:"F1",options:($s|split("|")|map({name:., id:("opt-" + (. | gsub(" ";"-")))}))}]}' | jq -r "${joined#*--jq }")
+                ;;
+            item-add)
+                url=""
+                prev=""
+                for a in "$@"; do
+                    [ "$prev" = --url ] && url="$a"
+                    prev="$a"
+                done
+                out="{\"id\":\"item-${url##*/}\"}"
+                out=$(jq -r .id <<<"$out")
+                ;;
+            item-edit)
+                id=""
+                opt=""
+                prev=""
+                for a in "$@"; do
+                    [ "$prev" = --id ] && id="$a"
+                    [ "$prev" = --single-select-option-id ] && opt="$a"
+                    prev="$a"
+                done
+                write board
+                mkdir -p board
+                name=$(tr '|' '\n' <<<"$statuses" | while read -r s; do [ "opt-${s// /-}" = "$opt" ] && echo "$s"; done)
+                echo "$name" >"board/${id#item-}"
+                out=""
+                ;;
+            *) echo "stub gh: unexpected project command: $joined" >&2; exit 99 ;;
+        esac
+        ;;
+    issue)
+        case "$2" in
+            view) out="https://github.com/$repo/issues/$3" ;;
+            develop)
+                if [ "${3:-}" = --list ]; then
+                    awk -v n="$4" -F'\t' '$1 == n {print $2 "\thttps://github.com/'"$repo"'/tree/" $2}' linked 2>/dev/null
+                    exit 0
+                fi
+                name=""
+                prev=""
+                for a in "$@"; do
+                    [ "$prev" = --name ] && name="$a"
+                    prev="$a"
+                done
+                write develop
+                flock -u 8
+                sleep "${STUB_DEVELOP_DELAY:-0}"
+                flock 8
+                echo "$name" >>branches
+                printf '%s\t%s\n' "$3" "$name" >>linked
+                out="github.com/$repo/tree/$name"
+                ;;
+            *) echo "stub gh: unexpected issue command: $joined" >&2; exit 99 ;;
+        esac
+        ;;
+    *) echo "stub gh: unexpected command: $joined" >&2; exit 99 ;;
+esac
+[ -n "$mode" ] && [ "$when" = after ] && fail "$mode"
+[ -z "$out" ] || printf '%s\n' "$out"
+exit 0
