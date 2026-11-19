@@ -1,0 +1,58 @@
+# Fixture of tools/tests/proxy-resolve.sh: Prince's real reverse proxy (built from Prince/reverse-proxy) in front of seven
+# small echo backends with the service names and ports of Prince's own compose file. Run only through the test script,
+# which sets the variables and gives the stack its own project name. Everything is published on 127.0.0.1 only.
+x-echo: &echo
+  image: ${ECHO_IMAGE}
+  volumes:
+    - ./echo.conf.template:/etc/nginx/templates/default.conf.template:ro
+
+services:
+  reverse-proxy:
+    build:
+      context: ${PROXY_CONTEXT}
+    ports:
+      - "127.0.0.1::80"
+    # Prince's compose file has no proxy healthcheck yet (the compose health ticket adds them); any HTTP answer counts.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -S -O /dev/null http://127.0.0.1/ 2>&1 | grep -q 'HTTP/'"]
+      interval: 1s
+      timeout: 3s
+      retries: 10
+
+  core-api:
+    <<: *echo
+    environment: { BACKEND_NAME: core-api, PORT: "8080" }
+    healthcheck: &hc8080
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/"]
+      interval: 1s
+      timeout: 3s
+      retries: 20
+  checkout-api:
+    <<: *echo
+    environment: { BACKEND_NAME: checkout-api, PORT: "8080" }
+    healthcheck: *hc8080
+  jobs-api:
+    <<: *echo
+    environment: { BACKEND_NAME: jobs-api, PORT: "8080" }
+    healthcheck: *hc8080
+
+  core-web-vue:
+    <<: *echo
+    environment: { BACKEND_NAME: core-web-vue, PORT: "80" }
+    healthcheck: &hc80
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:80/"]
+      interval: 1s
+      timeout: 3s
+      retries: 20
+  checkout-web-vue:
+    <<: *echo
+    environment: { BACKEND_NAME: checkout-web-vue, PORT: "80" }
+    healthcheck: *hc80
+  core-web-react:
+    <<: *echo
+    environment: { BACKEND_NAME: core-web-react, PORT: "80" }
+    healthcheck: *hc80
+  checkout-web-react:
+    <<: *echo
+    environment: { BACKEND_NAME: checkout-web-react, PORT: "80" }
+    healthcheck: *hc80

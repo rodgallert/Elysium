@@ -1,0 +1,8 @@
+# Override of compose.yml for the dual-stack case (#73-AC2.9): the project network gets an IPv6 subnet, so Docker's DNS
+# answers AAAA records for the backends, which listen on IPv4 only.
+networks:
+  default:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: fd42:7e57:73::/64

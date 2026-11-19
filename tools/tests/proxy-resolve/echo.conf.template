@@ -1,0 +1,14 @@
+# Fixture backend of tools/tests/proxy-resolve.sh: answers every request with a line naming itself and what it received.
+# nginx's entrypoint fills in BACKEND_NAME and PORT from the container's environment.
+server {
+    listen ${PORT};
+
+    location = /redir {
+        return 302 http://$http_host/redirected;
+    }
+
+    location / {
+        default_type text/plain;
+        return 200 "backend=${BACKEND_NAME} request=$request host=$http_host xff=$http_x_forwarded_for proto=$http_x_forwarded_proto\n";
+    }
+}
