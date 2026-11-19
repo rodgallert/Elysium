@@ -8,7 +8,7 @@
 #        tools/tests/proxy-resolve.sh --record   rewrite tools/tests/proxy-resolve/routes.capture from the current
 #                                                config (done once against the old config; it is the "before" of AC3;
 #                                                PROXY_DIR=<dir with the old nginx.conf and Dockerfile> records from there)
-# PROXY_TEST_ONLY=drift runs only the deploy drift check (#73-AC4.3).
+# PROXY_TEST_ONLY=drift runs only the deploy drift check (#73-AC4.3), PROXY_TEST_ONLY=net only AC5 and AC6.
 # Needs Docker with Compose. About 6 minutes (6m12s measured with the frontend builds; PROXY_TEST_ONLY=drift alone about 1 minute). PROXY_TEST_PROJECT overrides the project name.
 set -uo pipefail
 
@@ -294,6 +294,170 @@ if [ "${PROXY_TEST_ONLY:-}" = drift ]; then # only the drift section (about 2 mi
     exit
 fi
 
+# === AC5 and AC6: the proxy's DNS is restricted, and a dead backend address fails fast ===============================
+# timed <curl args...>: sets $t_code and $t_ms (curl's total time in ms); --max-time 8 so a hang shows as 000 and 8000
+t_code="" t_ms=0
+timed() {
+    local o
+    o="$(curl -s -o /dev/null --max-time 8 --path-as-is -w '%{http_code} %{time_total}' "$@" 2>/dev/null)"
+    t_code="${o%% *}"
+    t_ms="$(awk -v t="${o##* }" 'BEGIN { printf "%d", t * 1000 }')"
+}
+unresolved_count() { dc logs reverse-proxy 2>&1 | grep -c 'could not be resolved'; }
+# fixture_dns <compose args...>: the reverse-proxy service's `dns` list as JSON ("null" when the key is missing)
+service_dns() {
+    docker compose "$@" config --no-interpolate --format json 2>/dev/null \
+        | python3 -I -c 'import json, sys; print(json.dumps(json.load(sys.stdin)["services"]["reverse-proxy"].get("dns")))'
+}
+# poll_status <url> <status> [seconds]: polls once a second until the status is seen
+poll_status() {
+    local i
+    for ((i = 0; i < ${3:-14}; i++)); do
+        timed "$1"
+        [ "$t_code" = "$2" ] && return 0
+        sleep 1
+    done
+    return 1
+}
+
+dns_section() {
+    echo "== #73-AC5: restricted DNS"
+    local fixture_dns prince_dns i f out n0 n1
+    fixture_dns="$(service_dns -f "$fixture/compose.yml")"
+    prince_dns="$(service_dns -f "$root/Prince/docker-compose.yml")"
+    [ "$fixture_dns" = '["127.0.0.1"]' ] && ok || bad "#73-AC5" "the fixture's proxy service sets dns: [127.0.0.1] (found $fixture_dns)"
+    [ "$prince_dns" = '["127.0.0.1"]' ] && ok || bad "#73-AC5" "Prince's proxy service sets dns: [127.0.0.1] (found $prince_dns)"
+
+    # a Compose service that is removed: its name stops resolving; 502 at once, never another backend's content
+    dc rm -sf checkout-api >/dev/null 2>&1
+    n0="$(unresolved_count)"
+    for ((i = 0; i < 14; i++)); do
+        timed "$base/api/checkout/x"
+        n1="$(unresolved_count)"
+        [ "$n1" -gt "$n0" ] && break
+        sleep 1
+    done
+    [ "$n1" -gt "$n0" ] && ok || bad "#73-AC5.3" "a removed service's name never stopped resolving within the AC1 window (last status $t_code)"
+    for i in 1 2; do # #73-AC5.7: the same missing name twice; #73-AC5.1 and AC5.4: 502 in well under 1 s
+        out="$(curl -s --max-time 8 -w '\n%{http_code} %{time_total}' "$base/api/checkout/x")"
+        timed "$base/api/checkout/x"
+        if [ "$t_code" = 502 ] && [ "$t_ms" -lt 1000 ] && ! grep -q 'backend=' <<<"$out"; then ok
+        else bad "#73-AC5.1" "missing name, request $i: expected 502 in under 1000 ms with no backend content, got $t_code in $t_ms ms"; fi
+    done
+    # #73-AC5.5: 20 parallel requests to the missing name each answer 502 in under 1 s
+    for i in $(seq 20); do ( timed "$base/api/checkout/p$i"; echo "$t_code $t_ms" >"$work/par$i" ) & done
+    wait
+    out="$(for i in $(seq 20); do read -r c m <"$work/par$i"; { [ "$c" = 502 ] && [ "$m" -lt 1000 ]; } || echo "request $i: $c in $m ms"; done)"
+    [ -z "$out" ] && ok || bad "#73-AC5.5" "20 parallel requests to the missing name: not all 502 in under 1 s" "$out"
+    # #73-AC5.10: the log line names the upstream and carries no request header (the canary check of AC1.10 does the headers)
+    out="$(dc logs reverse-proxy 2>&1 | grep -F 'could not be resolved' | grep -F 'checkout-api' | tail -1)"
+    [ -n "$out" ] && ok || bad "#73-AC5.10" "no 'could not be resolved' line naming checkout-api"
+    # a backend that comes back answers 200 on its first request
+    dc up -d --no-deps checkout-api >/dev/null 2>&1
+    wait_healthy checkout-api
+    timed "$base/api/checkout/x"
+    [ "$t_code" = 200 ] && ok || bad "#73-AC5.3" "a service that comes back must answer 200 on the first request (got $t_code in $t_ms ms)"
+    # and removed again: 502 again
+    dc rm -sf checkout-api >/dev/null 2>&1
+    poll_status "$base/api/checkout/x" 502 && ok || bad "#73-AC5.7" "a backend that comes back and is removed again must answer 502 again"
+    dc up -d --no-deps checkout-api >/dev/null 2>&1
+    wait_healthy checkout-api
+
+    # #73-AC5.1, AC5.6, AC5.9: a dotted name is never sent to a resolver outside the project. The fixture's "host
+    # resolver" is a UDP listener on the project network that counts what it receives. A proxy with the fixture's dns
+    # setting (when the service has none, it would use the host's resolver, which the listener stands in for) gets 502
+    # for the dotted name and the listener sees nothing; the control, a proxy given the listener as its resolver,
+    # shows the listener would have seen the query.
+    local resp rip real ctl real_port ctl_port dns_arg conf="$work/dotted.conf"
+    resp="$(docker run -d --label "proxytest=$project" --network "${project}_default" --entrypoint sleep "$ECHO_IMAGE" 600 2>/dev/null)"
+    sleep 1
+    rip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$resp")"
+    # datagrams that reached the listener's address: UDP InDatagrams plus NoPorts (nothing listens, still counted)
+    queries() { docker exec "$resp" awk '/^Udp:/ { if (!h) { h = 1; next } print $2 + $3 }' /proc/net/snmp | tr -d '[:space:]'; }
+    awk '/^        location \/api\/ \{/ && !done { print "        location /dotted/ {\n            set $backend http://known.example.test:8080;\n            rewrite \"(?s)^/dotted/(.*)$\" /$1 break;\n            return 400;\n            proxy_pass $backend;\n        }\n"; done=1 } { print }' "$proxy_dir/nginx.conf" >"$conf"
+    dns_arg="127.0.0.1"
+    case "$fixture_dns" in '["127.0.0.1"]') ;; *) dns_arg="$rip" ;; esac
+    run_proxy() { docker run -d --label "proxytest=$project" --network "${project}_default" --dns "$1" -v "$conf":/etc/nginx/nginx.conf:ro -p 127.0.0.1::80 --entrypoint nginx "${project}-reverse-proxy" -g 'daemon off;' 2>/dev/null; }
+    ctl="$(run_proxy "$rip")"
+    sleep 1
+    ctl_port="$(docker port "$ctl" 80 | head -1 | sed 's/.*://')"
+    timed "http://127.0.0.1:$ctl_port/dotted/x"
+    sleep 1
+    [ "$(queries)" -gt 0 ] && ok || bad "#73-AC5.1" "control: a proxy using the fixture resolver must send it the dotted name's query (the test could not see a leak)"
+    f="$(queries)"
+    real="$(run_proxy "$dns_arg")"
+    sleep 1
+    real_port="$(docker port "$real" 80 | head -1 | sed 's/.*://')"
+    timed "http://127.0.0.1:$real_port/dotted/x"
+    out="$t_code in $t_ms ms"
+    sleep 1
+    if [ "$t_code" = 502 ] && [ "$(queries)" = "$f" ]; then ok
+    else bad "#73-AC5.1" "dotted name through the proxy with the fixture's dns setting: expected 502 and no query at the host resolver (got $out, queries $f -> $(queries))"; fi
+    # the host resolver is unreachable: the missing name still answers 502 at once
+    docker stop -t 0 "$resp" >/dev/null 2>&1
+    timed "http://127.0.0.1:$real_port/dotted/y"
+    { [ "$t_code" = 502 ] && [ "$t_ms" -lt 1000 ]; } && ok || bad "#73-AC5.6" "host resolver unreachable: expected 502 in under 1000 ms, got $t_code in $t_ms ms"
+    docker rm -f "$resp" "$ctl" "$real" >/dev/null 2>&1
+}
+
+timeout_section() {
+    echo "== #73-AC6: connect timeout"
+    local cfg i out other r svc="core-web-vue" ip filler n
+    cfg="$(grep -oE '^ *proxy_connect_timeout +[0-9a-z]+' "$proxy_dir/nginx.conf" | awk '{print $2}')"
+    [ "$cfg" = 3s ] && ok || bad "#73-AC6.4" "proxy_connect_timeout is 3s in nginx.conf (found '${cfg:-nothing}')"
+    # a stale address: resolved just now, then the container is gone and nothing answers for its address
+    timed "$base/vue/x"
+    [ "$t_code" = 200 ] || bad "#73-AC6" "$svc did not answer before the stale-address cases ($t_code)"
+    dc stop -t 0 "$svc" >/dev/null 2>&1
+    ( timed "$base/react/x"; echo "$t_code $t_ms" >"$work/other" ) & # #73-AC6.6: another backend, at normal speed
+    timed "$base/vue/x" # #73-AC6.1 plain path
+    wait
+    read -r r other <"$work/other"
+    { [ "$t_code" = 502 ] && [ "$t_ms" -ge 2500 ] && [ "$t_ms" -le 3500 ]; } && ok || bad "#73-AC6.2" "stale address: expected 502 between 2500 and 3500 ms, got $t_code in $t_ms ms"
+    { [ "$r" = 200 ] && [ "$other" -lt 1000 ]; } && ok || bad "#73-AC6.6" "while one backend is stale another backend's route answers 200 at normal speed (got $r in $other ms)"
+    timed "$base/vue/x?a=1&b=%2F" # #73-AC6.1 query string, and #73-AC6.7 the same stale address again
+    { [ "$t_code" = 502 ] && [ "$t_ms" -ge 2500 ] && [ "$t_ms" -le 3500 ]; } && ok || bad "#73-AC6.7" "stale address, second request: expected 502 between 2500 and 3500 ms, got $t_code in $t_ms ms"
+    # #73-AC6.5, AC6.1: 5 requests per second (trailing slash) each answer 502 within 3.5 s
+    for i in $(seq 15); do ( timed "$base/vue/"; echo "$t_code $t_ms" >"$work/st$i" ) & sleep 0.2; done
+    wait
+    out="$(for i in $(seq 15); do read -r c m <"$work/st$i"; { [ "$c" = 502 ] && [ "$m" -le 3500 ]; } || echo "request $i: $c in $m ms"; done)"
+    [ -z "$out" ] && ok || bad "#73-AC6.5" "requests during a stale-address window: not all 502 within 3500 ms" "$out"
+    # #73-AC6.10: the log says the connect timed out and names the upstream
+    out="$(dc logs reverse-proxy 2>&1 | grep -F 'upstream timed out')"
+    if grep -qF "$svc" <<<"$out"; then ok
+    else bad "#73-AC6.10" "no 'upstream timed out' line naming $svc in the error log" "$(tail -1 <<<"$out" | cut -c1-300)"; fi
+    # #73-AC6.3: the backend started again is found again within the AC1 window
+    dc up -d --no-deps "$svc" >/dev/null 2>&1
+    wait_healthy "$svc"
+    recovers "#73-AC6.3" "a stopped and started backend recovers within the AC1 bound after a stale address" "$svc"
+    # #73-AC6.9: a refused address (something else holds it and resets the connection) answers 502 at once
+    svc=core-web-react
+    ip="$(ip_of "$svc")"
+    timed "$base/react/x"
+    dc stop -t 0 "$svc" >/dev/null 2>&1
+    n=0
+    while [ "$n" -lt 12 ]; do
+        filler="$(docker run -d --label "proxytest=$project" --network "${project}_default" --entrypoint sleep "$ECHO_IMAGE" 300 2>/dev/null)"
+        n=$((n + 1))
+        [ "$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$filler" 2>/dev/null)" = "$ip" ] && break
+    done
+    timed "$base/react/x"
+    { [ "$t_code" = 502 ] && [ "$t_ms" -lt 1500 ]; } && ok || bad "#73-AC6.9" "refused address: expected 502 at once, got $t_code in $t_ms ms"
+    cleanup_fillers
+    dc up -d --no-deps "$svc" >/dev/null 2>&1
+    wait_healthy "$svc"
+    recovers "#73-AC6.3" "the backend recovers after the refused-address case" "$svc"
+}
+if [ "${PROXY_TEST_ONLY:-}" = net ]; then # only the AC5 and AC6 sections
+    start_all || bad "#73" "the stack did not start"
+    refresh_port
+    dns_section
+    timeout_section
+    echo "$pass passed, $failed failed"
+    [ "$failed" -eq 0 ]
+    exit
+fi
+
 # === AC2: the proxy starts with every backend down ===================================================================
 echo "== #73-AC2: start with every backend down"
 dc up -d reverse-proxy --no-deps >/dev/null 2>&1
@@ -441,6 +605,9 @@ while IFS=$'\t' read -r name path extra; do observe "$name" "$path" "$extra"; do
 while IFS=$'\t' read -r name path extra; do observe "$name" "$path" "$extra"; done < <(route_cases) >"$work/again"
 if diff "$capture_file" "$work/now" >"$work/diff"; then ok; else bad "#73-AC3" "routing differs from the recorded capture" "$(head -20 "$work/diff")"; fi
 check "#73-AC3.7" "the same requests twice return the same responses" diff -q "$work/now" "$work/again" >/dev/null
+
+dns_section
+timeout_section
 
 # the fail-closed rewrite check
 # A rewrite that misses must fail closed: every location has `return 400` after its rewrite. A scratch copy whose first
