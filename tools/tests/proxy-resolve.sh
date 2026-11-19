@@ -6,13 +6,15 @@
 #
 # Usage: tools/tests/proxy-resolve.sh            run every case
 #        tools/tests/proxy-resolve.sh --record   rewrite tools/tests/proxy-resolve/routes.capture from the current
-#                                                config (done once against the old config; it is the "before" of AC3)
-# Needs Docker with Compose. About five minutes. PROXY_TEST_PROJECT overrides the project name.
+#                                                config (done once against the old config; it is the "before" of AC3;
+#                                                PROXY_DIR=<dir with the old nginx.conf and Dockerfile> records from there)
+# Needs Docker with Compose. About 5 minutes (4m20s to 5m measured). PROXY_TEST_PROJECT overrides the project name.
 set -uo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fixture="$root/tools/tests/proxy-resolve"
-proxy_dir="$root/Prince/reverse-proxy"
+# PROXY_DIR points --record at a copy of the old proxy (nginx.conf and Dockerfile of the commit before the fix)
+proxy_dir="${PROXY_DIR:-$root/Prince/reverse-proxy}"
 capture_file="$fixture/routes.capture"
 record=0
 [ "${1:-}" = "--record" ] && record=1
@@ -55,6 +57,7 @@ valid="$(grep -oE 'valid=[0-9]+s' "$proxy_dir/nginx.conf" | head -1 | tr -dc 0-9
 config_valid="$valid"
 valid="${valid:-10}"
 wait_limit_ms=$(((valid + 2) * 1000))
+# #73-AC1.4: no fixed sleeps in the recovery checks: poll_until_200 polls once a second and returns on the first 200
 
 now_ms() { date +%s%3N; }
 cid() { dc ps -q "$1"; }
@@ -89,6 +92,7 @@ declare -A backend_of=(
     [/api/checkout/]=checkout-api [/api/]=core-api [/jobs/]=jobs-api [/admin/]=jobs-api
 )
 
+# (#73-AC1.4)
 # poll_until_200 <route>: polls once a second until 200 or the limit; sets $elapsed_ms, $seen (statuses in order) and
 # $stray (a status other than 200 and 502, or an answer from the wrong backend)
 elapsed_ms=0 seen="" stray=""
@@ -167,6 +171,8 @@ routes_of_backend_are() { # backend, expected status
 # --- AC3: routing capture ----------------------------------------------------------------------------------------
 
 long_a() { head -c "$1" /dev/zero | tr '\0' a; }
+# #73-AC3.1 (query string, no trailing slash, //, %2F per route), #73-AC3.2 (request line of 8 KiB and over it),
+# #73-AC3.8 (Host, X-Forwarded-For, X-Forwarded-Proto in the echoed request: the "headers" case spoofs both)
 # one line per case: name, path, extra curl arguments (the capture is name-keyed, so the order doesn't matter)
 route_cases() {
     local r name
@@ -178,6 +184,8 @@ route_cases() {
         printf '%s\t%s\t\n' "noslash$name" "${r%/}"
         printf '%s\t%s\t\n' "dslash$name" "${r}a//b"
         printf '%s\t%s\t\n' "encslash$name" "${r}a%2Fb"
+        printf '%s\t%s\t\n' "nlmid$name" "${r}foo%0Abar"  # an encoded newline: PCRE's . skips it, so a rewrite without (?s) misses
+        printf '%s\t%s\t\n' "nlend$name" "${r}foo%0A"
         printf '%s\t%s\t\n' "redir$name" "${r}redir"
         printf '%s\t%s\t%s\n' "headers$name" "${r}h" "-H|X-Forwarded-For: 203.0.113.9|-H|X-Forwarded-Proto: spoofed"
         printf '%s\t%s\t\n' "long8k$name" "${r}$(long_a 8100)"
@@ -235,6 +243,7 @@ if grep -qiE 'host not found in upstream|\[emerg\]' <<<"$logs"; then
 else ok; fi
 check "#73-AC2" "nginx -t passes with backends down" dc exec -T reverse-proxy nginx -t
 out="$(all_routes_are 502)" && ok || bad "#73-AC2.2" "all seven backends down: every route answers 502" "$out"
+# #73-AC2.6: with every backend missing nothing resolves at start (Docker answers NXDOMAIN); nginx must start and answer 502
 # nginx -s reload with every backend down succeeds and changes nothing
 before="$(dc exec -T reverse-proxy nginx -T 2>/dev/null | md5sum)"
 if dc exec -T reverse-proxy nginx -s reload >/dev/null 2>&1; then
@@ -293,6 +302,7 @@ proxy_started="$(docker inspect -f '{{.State.StartedAt}}' "$(cid reverse-proxy)"
 
 # === AC1: recreated backends are found again =========================================================================
 echo "== #73-AC1: recreate backends"
+# #73-AC1.9: 127.0.0.11 is Docker's embedded DNS on the project's own user-defined network, where this whole run happens
 check "#73-AC1.2" "the resolver's valid= is set in the config (read: '${config_valid:-nothing}')" test -n "$config_valid"
 for b in "${backends[@]}"; do
     if [ "$b" = core-api ]; then
@@ -362,6 +372,7 @@ compose_files=(-f "$fixture/compose.yml")
 
 # === AC3: routing before and after ===================================================================================
 echo "== #73-AC3: routing equals the recorded capture"
+# #73-AC3.9: the "before" is routes.capture, a fixture recorded on the old config; the old image is not needed
 start_all || bad "#73-AC3" "the stack did not start for the routing comparison"
 refresh_port
 while IFS=$'\t' read -r name path extra; do observe "$name" "$path" "$extra"; done < <(route_cases) >"$work/now"
@@ -370,6 +381,16 @@ if diff "$capture_file" "$work/now" >"$work/diff"; then ok; else bad "#73-AC3" "
 check "#73-AC3.7" "the same requests twice return the same responses" diff -q "$work/now" "$work/again" >/dev/null
 
 # === AC4: images ====================================================================================================
+# A rewrite that misses must fail closed: every location has `return 400` after its rewrite. A scratch copy whose first
+# rewrite can't match (the 400 comes before any lookup, so no backend is needed) must answer 400, not forward the raw URI.
+echo "== fail-closed: a rewrite that misses answers 400"
+sed 's#rewrite "(?s)^/api/(\.\*)$"#rewrite "(?s)^/nomatch/(.*)$"#' "$proxy_dir/nginx.conf" >"$work/miss.conf"
+cid_miss="$(docker run -d --entrypoint nginx -v "$work/miss.conf":/etc/nginx/nginx.conf:ro -p 127.0.0.1::80 "${project}-reverse-proxy" -g 'daemon off;' 2>/dev/null)"
+sleep 2
+miss_port="$(docker port "$cid_miss" 80 2>/dev/null | head -1 | sed 's/.*://')"
+if grep -q nomatch "$work/miss.conf" && [ "$(curl -s -o /dev/null --max-time 10 -w '%{http_code}' "http://127.0.0.1:$miss_port/api/x")" = 400 ]; then ok
+else bad "#73-AC3" "a rewrite that misses answers 400"; fi
+docker rm -f "$cid_miss" >/dev/null 2>&1
 echo "== #73-AC4: nginx branch and images"
 echo "nginx -v (proxy): $(dc exec -T reverse-proxy nginx -v 2>&1)"
 dockerfiles=("$proxy_dir/Dockerfile" "$root"/Prince/Frontend/*/Dockerfile)
@@ -381,6 +402,7 @@ for conf in "$root"/Prince/Frontend/*/nginx.conf; do
     check "#73-AC4" "nginx -t passes for $(basename "$(dirname "$conf")")'s config" \
         docker run --rm --entrypoint nginx -v "$conf":/etc/nginx/conf.d/default.conf:ro "$ECHO_IMAGE" -t >/dev/null 2>&1
 done
+# #73-AC4.10: nginx -v is printed above; the version and digest are in the PR
 # the effective config of the proxy image equals the committed one
 effective="$(docker run --rm --entrypoint nginx "${project}-reverse-proxy" -T 2>/dev/null | awk '/^# configuration file \/etc\/nginx\/nginx.conf:/{f=1;next} /^# configuration file /{f=0} f')"
 if [ "$effective" = "$(cat "$proxy_dir/nginx.conf")" ]; then ok; else bad "#73-AC4.9" "nginx -T of the proxy image differs from the committed nginx.conf"; fi
