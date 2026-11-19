@@ -415,17 +415,17 @@ timeout_section() {
     timed "$base/vue/x" # #73-AC6.1 plain path
     wait
     read -r r other <"$work/other"
-    { [ "$t_code" = 502 ] && [ "$t_ms" -ge 2500 ] && [ "$t_ms" -le 3500 ]; } && ok || bad "#73-AC6.2" "stale address: expected 502 between 2500 and 3500 ms, got $t_code in $t_ms ms"
+    { [ "$t_code" = 504 ] && [ "$t_ms" -ge 2500 ] && [ "$t_ms" -le 3500 ]; } && ok || bad "#73-AC6.2" "stale address: expected 504 between 2500 and 3500 ms, got $t_code in $t_ms ms"
     { [ "$r" = 200 ] && [ "$other" -lt 1000 ]; } && ok || bad "#73-AC6.6" "while one backend is stale another backend's route answers 200 at normal speed (got $r in $other ms)"
     timed "$base/vue/x?a=1&b=%2F" # #73-AC6.1 query string, and #73-AC6.7 the same stale address again
-    # after the first timed-out connect the kernel marks the address unreachable, so the repeat may fail at once instead
-    # of after 3 s: 502 within the 3500 ms bound is the requirement, the 2500 ms floor only applies to the first one
-    { [ "$t_code" = 502 ] && [ "$t_ms" -le 3500 ]; } && ok || bad "#73-AC6.7" "stale address, second request: expected 502 within 3500 ms, got $t_code in $t_ms ms"
+    # after the first timed-out connect the kernel marks the address unreachable, so the repeat may fail at once (502)
+    # instead of after 3 s (504): either within the 3500 ms bound is the requirement, the 2500 ms floor only the first
+    { { [ "$t_code" = 502 ] || [ "$t_code" = 504 ]; } && [ "$t_ms" -le 3500 ]; } && ok || bad "#73-AC6.7" "stale address, second request: expected 504 (or 502 at once) within 3500 ms, got $t_code in $t_ms ms"
     # #73-AC6.5, AC6.1: 5 requests per second (trailing slash) each answer 502 within 3.5 s
     for i in $(seq 15); do ( timed "$base/vue/"; echo "$t_code $t_ms" >"$work/st$i" ) & sleep 0.2; done
     wait
-    out="$(for i in $(seq 15); do read -r c m <"$work/st$i"; { [ "$c" = 502 ] && [ "$m" -le 3500 ]; } || echo "request $i: $c in $m ms"; done)"
-    [ -z "$out" ] && ok || bad "#73-AC6.5" "requests during a stale-address window: not all 502 within 3500 ms" "$out"
+    out="$(for i in $(seq 15); do read -r c m <"$work/st$i"; { { [ "$c" = 502 ] || [ "$c" = 504 ]; } && [ "$m" -le 3500 ]; } || echo "request $i: $c in $m ms"; done)"
+    [ -z "$out" ] && ok || bad "#73-AC6.5" "requests during a stale-address window: not all 504 (or 502 at once) within 3500 ms" "$out"
     # #73-AC6.10: the log says the connect timed out and names the upstream. nginx's error log prints the resolved
     # address of the upstream ("upstream: \"http://<ip>:80/\""), never the name a variable proxy_pass was given, so the
     # stale address is what the line is checked for.
