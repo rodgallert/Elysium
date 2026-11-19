@@ -9,7 +9,7 @@
 #                                                config (done once against the old config; it is the "before" of AC3;
 #                                                PROXY_DIR=<dir with the old nginx.conf and Dockerfile> records from there)
 # PROXY_TEST_ONLY=drift runs only the deploy drift check (#73-AC4.3).
-# Needs Docker with Compose. About 5 minutes (4m20s to 5m measured). PROXY_TEST_PROJECT overrides the project name.
+# Needs Docker with Compose. About 6 minutes (6m12s measured with the frontend builds; PROXY_TEST_ONLY=drift alone about 1 minute). PROXY_TEST_PROJECT overrides the project name.
 set -uo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
