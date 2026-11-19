@@ -433,6 +433,7 @@ The phases and their tasks are in `ROADMAP.md`; this is the short version.
 ```
 Elysium/
 ├── docker-compose.yml        # the whole ecosystem
+├── Edge/                     # edge proxy for local running (Docs/environments-design.md)
 ├── Keeper/                   # gateway (replaces Prince's nginx)
 ├── Masquerade/               # accounts: own solution, Dockerfile, CLAUDE.md, CHANGELOG
 ├── Harpy/                    # ledger (later)
@@ -444,6 +445,8 @@ Elysium/
 
 Each service folder is self-contained (solution, Dockerfile, `CLAUDE.md`, `CHANGELOG.md`). Prince's
 sign-in, personal-data and balance code moves out to Masquerade and Harpy as those are built.
+
+For local running, the ecosystem runs as two Compose projects (`elysium-prod` and `elysium-dev`) plus the edge proxy's own project, which lives in its own `Edge/` folder; which files define them is left to the prod/dev stacks ticket (#76), and `docker-compose.prod.yml` keeps meaning the production image pins. `Docs/environments-design.md` records the design and the names the root compose file must keep.
 
 ## 18. Hostnames — **Decided**
 
@@ -458,6 +461,8 @@ the local machine without setup.
 
 Closer to production, and passkeys are bound to one domain (`accounts.localhost`), so they work for
 every product. `/` on each hostname is that app's home page.
+
+For local running there are two hostname sets, `<app>.localhost` for production and `<app>.dev.localhost` for development; `Docs/environments-design.md` ("Hostnames") records the development names.
 
 ## 19. Shared look and internationalisation — **Decided**
 
@@ -548,3 +553,5 @@ credentials for databases, Redis and the broker; encrypted personal data; append
 **Later phase — "Elysium on Kubernetes: zero-trust networking":** a service mesh with automatic
 mutual TLS between every service, network policies (segmentation), service identities on every
 internal call, and revocation checkable by any service, not only Keeper.
+
+For local running, production and development are two isolated stacks with no shared credential, key or data store, joined only by a loopback-only edge proxy; `Docs/environments-design.md` records how.

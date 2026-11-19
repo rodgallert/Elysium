@@ -40,6 +40,32 @@ The repo runs on the ticket workflow, and the work already done locally is lande
 
 **Done when:** a clean clone, `docker compose up` in `Prince/`, and every route answers, file storage included; a ticket PR shows a green CI build, goes through review on the board, and its merge publishes development images.
 
+## Environments
+
+Prince runs as two isolated stacks, production and development, behind one loopback-only edge proxy
+(`Docs/environments-design.md`; epic #62). Hardening (epic #63) runs in parallel.
+
+- [ ] Environments design record and this phase (#69)
+- [ ] Bookkeeping scripts: `tools/ticket.sh` (#70), `tools/pr.sh` (#71), `tools/wt.sh` (#72), each with a stubbed-`gh` test harness
+- [ ] Proxy resolver fix and nginx upgrade: upstreams re-resolved, images off nginx 1.27 (#73, with #36)
+- [ ] Compose health and ordering: restart policies, narrower dependencies, health timings, image-name check (#74)
+- [ ] Edge proxy: `elysium-edge` network, loopback-only bindings, Host routing with a per-environment allow-list (#75)
+- [ ] Prod/dev stacks and env files (#76)
+- [ ] Per-app up/down, dev-update and the `elysium.needs` label parser with a no-op reference-count hook (#77)
+- [ ] Runtime baseline and lint (#78)
+- [ ] Silo hardening: console profile off by default, non-root storage user, bucket quota, credentials off argv (#79)
+- [ ] CI env-check under busybox (#80)
+- [ ] `mem_limit` at 2x the measured peak (#81)
+
+**Moved out:** `/ready` endpoints and the Prince carry-over list go to the Prince design sprint; token
+401 across environments, CORS and sign-in isolation go to Phase 1 as test debt, written as skipped
+cases that name their precondition; the real shared-service reference counting goes to the first
+shared-service compose (its acceptance list is in `Docs/environments-design.md`).
+
+**Done when:** the 10-minute check passes: both stacks are running (prod and dev answer on their
+hostnames); sign-in isolation between them is noted as Phase 1 test debt; stopping dev leaves
+production answering 200; a missing key is refused before any container starts.
+
 ## Phase 1: Masquerade (accounts) — detailed design
 
 - [x] Data model: accounts, login methods, shared personal data with verification status, product activations, sessions
