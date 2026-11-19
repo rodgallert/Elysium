@@ -8,6 +8,7 @@
 #        tools/tests/proxy-resolve.sh --record   rewrite tools/tests/proxy-resolve/routes.capture from the current
 #                                                config (done once against the old config; it is the "before" of AC3;
 #                                                PROXY_DIR=<dir with the old nginx.conf and Dockerfile> records from there)
+# PROXY_TEST_ONLY=drift runs only the deploy drift check (#73-AC4.3).
 # Needs Docker with Compose. About 5 minutes (4m20s to 5m measured). PROXY_TEST_PROJECT overrides the project name.
 set -uo pipefail
 
@@ -24,6 +25,8 @@ work="$(mktemp -d)"
 pass=0
 failed=0
 
+# shellcheck source=lib/deploy-drift.sh
+source "$root/tools/tests/lib/deploy-drift.sh"
 ECHO_IMAGE="$(sed -n 's/^FROM \(nginx:[^ ]*\).*/\1/p' "$proxy_dir/Dockerfile" | head -1)"
 export ECHO_IMAGE PROXY_CONTEXT="$proxy_dir"
 compose_files=(-f "$fixture/compose.yml")
@@ -31,6 +34,8 @@ dc() { docker compose -p "$project" "${compose_files[@]}" "$@"; }
 
 cleanup() {
     dc down -v --remove-orphans --timeout 2 >/dev/null 2>&1
+    docker compose -p "${project}-fe" -f "$root/Prince/docker-compose.yml" down -v --remove-orphans --timeout 2 >/dev/null 2>&1
+    docker images --format '{{.Repository}}' | grep "^${project}-fe-" | xargs -r docker rmi -f >/dev/null 2>&1
     docker ps -aq --filter "label=proxytest=$project" | xargs -r docker rm -f >/dev/null 2>&1
     docker rmi -f "${project}-reverse-proxy" >/dev/null 2>&1
     rm -rf "$work"
@@ -380,7 +385,64 @@ while IFS=$'\t' read -r name path extra; do observe "$name" "$path" "$extra"; do
 if diff "$capture_file" "$work/now" >"$work/diff"; then ok; else bad "#73-AC3" "routing differs from the recorded capture" "$(head -20 "$work/diff")"; fi
 check "#73-AC3.7" "the same requests twice return the same responses" diff -q "$work/now" "$work/again" >/dev/null
 
-# === AC4: images ====================================================================================================
+# === AC4.3: a deploy replaces the old containers and nothing drifts ================================================
+# Deploy the proxy with a changed config (a new image) over the running one with `up -d --build`, and the four real
+# frontends; deploy_drift (tools/tests/lib/deploy-drift.sh) must then find every container on the image just built, with
+# the committed config, created after the deploy started and in the right Compose project, with no leftover container.
+drift_section() {
+    echo "== #73-AC4.3: up -d --build replaces the old containers, no drift"
+    local scratch="$work/proxy-v2" started svc cids id out expect old_id other past_ns f rc
+    mkdir -p "$scratch"
+    cp "$proxy_dir/Dockerfile" "$scratch/Dockerfile"
+    { cat "$proxy_dir/nginx.conf"; echo "# deploy drift check: a changed file, so the image changes"; } >"$scratch/nginx.conf"
+    old_id="$(cid reverse-proxy)"
+    started="$(date +%s%N)"
+    PROXY_CONTEXT="$scratch" dc up -d --build --no-deps reverse-proxy >/dev/null 2>&1
+    cids="$(dc ps -aq reverse-proxy)"
+    if [ "$(wc -w <<<"$cids")" = 1 ] && [ "$cids" != "$old_id" ]; then ok
+    else bad "#73-AC4.3" "the old proxy container was not replaced by exactly one new one" "old=$old_id now=$cids"; fi
+    expect="$(docker image inspect -f '{{.Id}}' "${project}-reverse-proxy")"
+    if out="$(deploy_drift "$cids" "$project" "$started" "$expect" /etc/nginx/nginx.conf "$scratch/nginx.conf")"; then ok
+    else bad "#73-AC4.3" "the redeployed proxy drifted" "$out"; fi
+    # the check itself must fail, naming the container and the field, for each kind of drift
+    other="$work/other.conf"
+    { cat "$scratch/nginx.conf"; echo "# edited"; } >"$other"
+    past_ns="$(($(date +%s%N) + 3600000000000))"
+    declare -A cases=(
+        [image]="$cids $project $started sha256:0000000000000000000000000000000000000000000000000000000000000000 /etc/nginx/nginx.conf $scratch/nginx.conf"
+        [config]="$cids $project $started $expect /etc/nginx/nginx.conf $other"
+        [created]="$cids $project $past_ns $expect /etc/nginx/nginx.conf $scratch/nginx.conf"
+        [project]="$cids some-other-project $started $expect /etc/nginx/nginx.conf $scratch/nginx.conf"
+    )
+    for f in image config created project; do
+        # shellcheck disable=SC2086
+        out="$(deploy_drift ${cases[$f]} 2>&1)" && rc=0 || rc=$?
+        if [ "$rc" -ne 0 ] && grep -q "drift: .*reverse-proxy.*: $f" <<<"$out"; then ok
+        else bad "#73-AC4.3" "drift in the $f is not reported (exit $rc)" "$out"; fi
+    done
+    # the four frontends, built from the repository and deployed in a project of their own
+    local fe="${project}-fe" fecompose=(-f "$root/Prince/docker-compose.yml")
+    declare -A fe_dir=([core-web-vue]=prince-core-vue [checkout-web-vue]=prince-checkout-vue [core-web-react]=prince-core-react [checkout-web-react]=prince-checkout-react)
+    started="$(date +%s%N)"
+    docker compose -p "$fe" "${fecompose[@]}" up -d --build --no-deps "${!fe_dir[@]}" >"$work/fe-up.log" 2>&1 \
+        || bad "#73-AC4.3" "the frontends did not deploy" "$(tail -5 "$work/fe-up.log")"
+    for svc in "${!fe_dir[@]}"; do
+        id="$(docker compose -p "$fe" "${fecompose[@]}" ps -aq "$svc" 2>/dev/null)"
+        expect="$(docker image inspect -f '{{.Id}}' "${fe}-${svc}" 2>/dev/null)"
+        if out="$(deploy_drift "$id" "$fe" "$started" "$expect" /etc/nginx/conf.d/default.conf "$root/Prince/Frontend/${fe_dir[$svc]}/nginx.conf")"; then ok
+        else bad "#73-AC4.3" "$svc drifted" "$out"; fi
+    done
+}
+if [ "${PROXY_TEST_ONLY:-}" = drift ]; then # only the drift section (about 2 minutes, mostly the frontend builds)
+    start_all || bad "#73" "the stack did not start"
+    refresh_port
+    drift_section
+    echo "$pass passed, $failed failed"
+    [ "$failed" -eq 0 ]
+    exit
+fi
+
+# the fail-closed rewrite check
 # A rewrite that misses must fail closed: every location has `return 400` after its rewrite. A scratch copy whose first
 # rewrite can't match (the 400 comes before any lookup, so no backend is needed) must answer 400, not forward the raw URI.
 echo "== fail-closed: a rewrite that misses answers 400"
@@ -427,6 +489,9 @@ else
     echo "INFO #73-AC4.8: the image does NOT start hardened: $(docker logs "$hid" 2>&1 | tail -2 | tr '\n' ' ')"
 fi
 docker rm -f "$hid" >/dev/null 2>&1
+
+# last: it rebuilds the proxy image from a changed copy
+drift_section
 
 echo
 echo "$pass passed, $failed failed"
