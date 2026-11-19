@@ -92,14 +92,14 @@ $GH_OUT"
         if { [ "$GH_KIND" = server ] || [ "$GH_KIND" = ratelimit ] || [ "$GH_KIND" = timeout ]; } && [ "$attempt" -lt 3 ]; then
             wait=$((2 << attempt))
             if [ "$GH_KIND" = ratelimit ]; then
-                # gh prints no response headers unless asked to, so usually neither is readable: wait the cap
+                # gh prints no response headers unless asked to, so usually neither is readable (or the value is not a usable number): wait the cap
                 wait=60
                 ra=$(grep -iE '^retry-after:' <<<"$text" | head -1 | sed -E 's/^[^:]*: *//; s/[[:space:]]*$//')
                 reset=$(grep -iE '^x-ratelimit-reset:' <<<"$text" | head -1 | sed -E 's/^[^:]*: *//; s/[[:space:]]*$//')
                 if [ -n "$ra" ]; then
-                    if [[ "$ra" =~ ^[0-9]+$ ]]; then wait=$ra; else wait=$((2 << attempt)); fi
+                    if [[ "$ra" =~ ^[0-9]+$ ]]; then wait=$ra; fi
                 elif [[ "$reset" =~ ^[0-9]+$ ]]; then
-                    if [ $((reset - $(date +%s))) -ge 1 ]; then wait=$((reset - $(date +%s))); else wait=$((2 << attempt)); fi
+                    if [ $((reset - $(date +%s))) -ge 1 ]; then wait=$((reset - $(date +%s))); fi
                 fi
             fi
             [ "$wait" -le 60 ] || wait=60
