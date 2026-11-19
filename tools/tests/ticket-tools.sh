@@ -778,7 +778,7 @@ $err"
     check "#70-AC5 a secondary rate limit honours Retry-After (7 s)" bash -c '[ '"$rc"' -eq 0 ] && [ "$(cat "'"$STUB_DIR"'/sleeps")" = 7 ]'
 
     local ra
-    for ra in "abc:2" "-5:2" "300:60" "0:0"; do
+    for ra in "abc:60" "-5:60" "300:60" "0:0"; do
         new_world
         spec_issue 20
         fault "$(read_fault)" 1 "rl-secondary:${ra%%:*}"
