@@ -10,6 +10,8 @@ services:
   reverse-proxy:
     build:
       context: ${PROXY_CONTEXT}
+    dns:
+      - 127.0.0.1
     ports:
       - "127.0.0.1::80"
     # Prince's compose file has no proxy healthcheck yet (the compose health ticket adds them); any HTTP answer counts.

@@ -408,7 +408,9 @@ timeout_section() {
     # a stale address: resolved just now, then the container is gone and nothing answers for its address
     timed "$base/vue/x"
     [ "$t_code" = 200 ] || bad "#73-AC6" "$svc did not answer before the stale-address cases ($t_code)"
+    ip="$(ip_of "$svc")"
     dc stop -t 0 "$svc" >/dev/null 2>&1
+    sleep 1 # the container's network is torn down a moment after its process: wait until the address is really dead
     ( timed "$base/react/x"; echo "$t_code $t_ms" >"$work/other" ) & # #73-AC6.6: another backend, at normal speed
     timed "$base/vue/x" # #73-AC6.1 plain path
     wait
@@ -422,10 +424,12 @@ timeout_section() {
     wait
     out="$(for i in $(seq 15); do read -r c m <"$work/st$i"; { [ "$c" = 502 ] && [ "$m" -le 3500 ]; } || echo "request $i: $c in $m ms"; done)"
     [ -z "$out" ] && ok || bad "#73-AC6.5" "requests during a stale-address window: not all 502 within 3500 ms" "$out"
-    # #73-AC6.10: the log says the connect timed out and names the upstream
+    # #73-AC6.10: the log says the connect timed out and names the upstream. nginx's error log prints the resolved
+    # address of the upstream ("upstream: \"http://<ip>:80/\""), never the name a variable proxy_pass was given, so the
+    # stale address is what the line is checked for.
     out="$(dc logs reverse-proxy 2>&1 | grep -F 'upstream timed out')"
-    if grep -qF "$svc" <<<"$out"; then ok
-    else bad "#73-AC6.10" "no 'upstream timed out' line naming $svc in the error log" "$(tail -1 <<<"$out" | cut -c1-300)"; fi
+    if grep -qF "upstream: \"http://$ip:" <<<"$out"; then ok
+    else bad "#73-AC6.10" "no 'upstream timed out' line for the stale address $ip in the error log" "$(tail -1 <<<"$out" | cut -c1-300)"; fi
     # #73-AC6.3: the backend started again is found again within the AC1 window
     dc up -d --no-deps "$svc" >/dev/null 2>&1
     wait_healthy "$svc"
