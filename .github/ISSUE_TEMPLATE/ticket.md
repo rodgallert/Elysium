@@ -56,4 +56,4 @@ Numbered steps on the running stack and what to expect (exact status code or scr
 What this ticket deliberately doesn't do, and where that work is tracked (issue or roadmap task).
 
 ## Spec approval
-The PO approves this spec; an `Approved: <link to the approval comment>` line is added here when they do. The `Epic:`, `Approved:`, `Branch:` and `PR:` lines are bookkeeping; an edit to any section from Goal to Out of scope after approval needs approval again, and every change to the criteria is also recorded as a `Spec change:` comment.
+The PO approves this spec; an `Approved: <link to the approval comment>` line is added here when they do. The `Epic:`, `Estimate:`, `Approved:`, `Branch:` and `PR:` lines are bookkeeping; an edit to any section from Goal to Out of scope after approval needs approval again, and every change to the criteria is also recorded as a `Spec change:` comment.
