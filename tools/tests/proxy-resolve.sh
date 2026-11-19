@@ -408,6 +408,10 @@ timeout_section() {
     # a stale address: resolved just now, then the container is gone and nothing answers for its address
     timed "$base/vue/x"
     [ "$t_code" = 200 ] || bad "#73-AC6" "$svc did not answer before the stale-address cases ($t_code)"
+    # every nginx worker keeps its own resolver cache: warm them all, or a worker that has not looked the name up yet
+    # finds it gone and answers at once ("could not be resolved") instead of using the stale address
+    for i in $(seq 80); do curl -s -o /dev/null --max-time 5 "$base/vue/x" & done
+    wait
     ip="$(ip_of "$svc")"
     dc stop -t 0 "$svc" >/dev/null 2>&1
     sleep 1 # the container's network is torn down a moment after its process: wait until the address is really dead
@@ -415,7 +419,7 @@ timeout_section() {
     timed "$base/vue/x" # #73-AC6.1 plain path
     wait
     read -r r other <"$work/other"
-    { [ "$t_code" = 504 ] && [ "$t_ms" -ge 2500 ] && [ "$t_ms" -le 3500 ]; } && ok || bad "#73-AC6.2" "stale address: expected 504 between 2500 and 3500 ms, got $t_code in $t_ms ms"
+    { [ "$t_code" = 504 ] && [ "$t_ms" -ge 2500 ] && [ "$t_ms" -le 3500 ]; } && ok || bad "#73-AC6.2" "stale address: expected 504 between 2500 and 3500 ms, got $t_code in $t_ms ms" "$(dc logs reverse-proxy 2>&1 | grep "\[error\]" | tail -2 | cut -c1-260)"
     { [ "$r" = 200 ] && [ "$other" -lt 1000 ]; } && ok || bad "#73-AC6.6" "while one backend is stale another backend's route answers 200 at normal speed (got $r in $other ms)"
     timed "$base/vue/x?a=1&b=%2F" # #73-AC6.1 query string, and #73-AC6.7 the same stale address again
     # after the first timed-out connect the kernel marks the address unreachable, so the repeat may fail at once (502)
