@@ -181,6 +181,10 @@ services:
   reverse-proxy:
     build:
       context: ./reverse-proxy
+    # Compose service names resolve through Docker's embedded DNS (127.0.0.11); every other name fails at once instead of
+    # being forwarded to the host's resolver (and its LLMNR lookups on the local network).
+    dns:
+      - 127.0.0.1
     ports:
       - "127.0.0.1:${REVERSE_PROXY_PORT}:80"
     depends_on:
