@@ -420,8 +420,9 @@ timeout_section() {
     { [ "$t_code" = 504 ] && [ "$t_ms" -ge 2500 ] && [ "$t_ms" -le 3500 ]; } && ok || bad "#73-AC6.2" "stale address: expected 504 between 2500 and 3500 ms, got $t_code in $t_ms ms" "$(dc logs reverse-proxy 2>&1 | grep "\[error\]" | tail -2 | cut -c1-260)"
     { [ "$r" = 200 ] && [ "$other" -lt 1000 ]; } && ok || bad "#73-AC6.6" "while one backend is stale another backend's route answers 200 at normal speed (got $r in $other ms)"
     timed "$base/vue/x?a=1&b=%2F" # #73-AC6.1 query string, and #73-AC6.7 the same stale address again
-    # after the first timed-out connect (504) the kernel marks the address unreachable, so the repeat fails at once (502)
-    { [ "$t_code" = 502 ] && [ "$t_ms" -le 3500 ]; } && ok || bad "#73-AC6.7" "stale address, second request: expected 502 at once within 3500 ms, got $t_code in $t_ms ms"
+    # the repeat is another worker's connect to the same dead address: 504 after 3 s, or 502 at once when the kernel has
+    # already marked the address unreachable; both within the 3500 ms bound
+    { { [ "$t_code" = 502 ] || [ "$t_code" = 504 ]; } && [ "$t_ms" -le 3500 ]; } && ok || bad "#73-AC6.7" "stale address, second request: expected 502 (at once) or 504 within 3500 ms, got $t_code in $t_ms ms"
     # #73-AC6.5, AC6.1: 5 requests per second (trailing slash) each answer within 3.5 s: 504 for a connect that times out,
     # 502 for the ones that find the address already marked unreachable
     for i in $(seq 15); do ( timed "$base/vue/"; echo "$t_code $t_ms" >"$work/st$i" ) & sleep 0.2; done
