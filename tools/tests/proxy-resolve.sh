@@ -114,7 +114,8 @@ poll_until_200() {
             grep -q "backend=$want " <<<"$body" || stray+=" wrong-backend($status)"
             return 0
         fi
-        [ "$status" = 502 ] || stray+=" $status"
+        # 502 (no address, refused) or 504 (a stale address that drops the connection: proxy_connect_timeout) are the stale window
+        [ "$status" = 502 ] || [ "$status" = 504 ] || stray+=" $status"
         [ "$elapsed_ms" -ge "$wait_limit_ms" ] && return 1
         sleep 1
     done
@@ -322,7 +323,7 @@ poll_status() {
 
 dns_section() {
     echo "== #73-AC5: restricted DNS"
-    local fixture_dns prince_dns i f out n0 n1
+    local fixture_dns prince_dns i f out n0
     fixture_dns="$(service_dns -f "$fixture/compose.yml")"
     prince_dns="$(service_dns -f "$root/Prince/docker-compose.yml")"
     [ "$fixture_dns" = '["127.0.0.1"]' ] && ok || bad "#73-AC5" "the fixture's proxy service sets dns: [127.0.0.1] (found $fixture_dns)"
@@ -330,14 +331,11 @@ dns_section() {
 
     # a Compose service that is removed: its name stops resolving; 502 at once, never another backend's content
     dc rm -sf checkout-api >/dev/null 2>&1
+    # every nginx worker keeps its own resolver cache of `valid` seconds: after valid + 1 s none can still hold the old address
+    sleep $((valid + 1))
     n0="$(unresolved_count)"
-    for ((i = 0; i < 14; i++)); do
-        timed "$base/api/checkout/x"
-        n1="$(unresolved_count)"
-        [ "$n1" -gt "$n0" ] && break
-        sleep 1
-    done
-    [ "$n1" -gt "$n0" ] && ok || bad "#73-AC5.3" "a removed service's name never stopped resolving within the AC1 window (last status $t_code)"
+    timed "$base/api/checkout/x"
+    [ "$(unresolved_count)" -gt "$n0" ] && ok || bad "#73-AC5.3" "a removed service's name still resolves after the AC1 window (last status $t_code)"
     for i in 1 2; do # #73-AC5.7: the same missing name twice; #73-AC5.1 and AC5.4: 502 in well under 1 s
         out="$(curl -s --max-time 8 -w '\n%{http_code} %{time_total}' "$base/api/checkout/x")"
         timed "$base/api/checkout/x"
@@ -422,10 +420,10 @@ timeout_section() {
     { [ "$t_code" = 504 ] && [ "$t_ms" -ge 2500 ] && [ "$t_ms" -le 3500 ]; } && ok || bad "#73-AC6.2" "stale address: expected 504 between 2500 and 3500 ms, got $t_code in $t_ms ms" "$(dc logs reverse-proxy 2>&1 | grep "\[error\]" | tail -2 | cut -c1-260)"
     { [ "$r" = 200 ] && [ "$other" -lt 1000 ]; } && ok || bad "#73-AC6.6" "while one backend is stale another backend's route answers 200 at normal speed (got $r in $other ms)"
     timed "$base/vue/x?a=1&b=%2F" # #73-AC6.1 query string, and #73-AC6.7 the same stale address again
-    # after the first timed-out connect the kernel marks the address unreachable, so the repeat may fail at once (502)
-    # instead of after 3 s (504): either within the 3500 ms bound is the requirement, the 2500 ms floor only the first
-    { { [ "$t_code" = 502 ] || [ "$t_code" = 504 ]; } && [ "$t_ms" -le 3500 ]; } && ok || bad "#73-AC6.7" "stale address, second request: expected 504 (or 502 at once) within 3500 ms, got $t_code in $t_ms ms"
-    # #73-AC6.5, AC6.1: 5 requests per second (trailing slash) each answer 502 within 3.5 s
+    # after the first timed-out connect (504) the kernel marks the address unreachable, so the repeat fails at once (502)
+    { [ "$t_code" = 502 ] && [ "$t_ms" -le 3500 ]; } && ok || bad "#73-AC6.7" "stale address, second request: expected 502 at once within 3500 ms, got $t_code in $t_ms ms"
+    # #73-AC6.5, AC6.1: 5 requests per second (trailing slash) each answer within 3.5 s: 504 for a connect that times out,
+    # 502 for the ones that find the address already marked unreachable
     for i in $(seq 15); do ( timed "$base/vue/"; echo "$t_code $t_ms" >"$work/st$i" ) & sleep 0.2; done
     wait
     out="$(for i in $(seq 15); do read -r c m <"$work/st$i"; { { [ "$c" = 502 ] || [ "$c" = 504 ]; } && [ "$m" -le 3500 ]; } || echo "request $i: $c in $m ms"; done)"
@@ -564,8 +562,8 @@ for b in "${backends[@]}"; do
         rm -f "$work/streaming"
         wait
         n_stream="$(wc -l <"$work/stream")"
-        odd="$(grep -vE '^200 backend=core-api$|^502 $' "$work/stream" | sort | uniq -c | head -3)"
-        [ -z "$odd" ] && [ "$(wc -l <"$work/stream")" -gt 5 ] && ok || bad "#73-AC1.5" "requests during the recreation got something else than 200 from core-api or 502 (${n_stream:-0} requests)" "$odd"
+        odd="$(grep -vE '^200 backend=core-api$|^50[24] $' "$work/stream" | sort | uniq -c | head -3)"
+        [ -z "$odd" ] && [ "$(wc -l <"$work/stream")" -gt 5 ] && ok || bad "#73-AC1.5" "requests during the recreation got something else than 200 from core-api, 502 or 504 (${n_stream:-0} requests)" "$odd"
     fi
 done
 # AC1.7: the same backend recreated twice in a row recovers both times
