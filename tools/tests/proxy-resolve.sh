@@ -298,13 +298,17 @@ for b in "${backends[@]}"; do
     if [ "$b" = core-api ]; then
         # AC1.5: five requests per second during the recreation, only 200 or 502 and never another backend's answer
         : >"$work/stream"
+        touch "$work/streaming"
         (
             while [ -e "$work/streaming" ]; do
-                curl -s --max-time 10 -w ' %{http_code}\n' "$base/api/x" >>"$work/stream" 2>/dev/null
+                ( # each request in its own process: a slow answer must not hold back the next one
+                    reply="$(curl -s --max-time 12 -w '\n%{http_code}' "$base/api/x" 2>/dev/null)"
+                    echo "${reply##*$'\n'} $(grep -o 'backend=[a-z-]*' <<<"$reply")" >>"$work/stream"
+                ) &
                 sleep 0.2
             done
+            wait
         ) &
-        touch "$work/streaming"
     fi
     recreate "$b" || { bad "#73-AC1" "$b did not come back healthy with a new address"; continue; }
     proxy_now="$(docker inspect -f '{{.State.StartedAt}}' "$(cid reverse-proxy)")"
@@ -313,8 +317,9 @@ for b in "${backends[@]}"; do
     if [ "$b" = core-api ]; then
         rm -f "$work/streaming"
         wait
-        odd="$(grep -vE '^backend=core-api .* 200$|^<html>.*502|^ 502$|^[[:space:]]*502$' "$work/stream" | grep -vE '502 Bad Gateway|^<|^$|nginx' | head -3)"
-        [ -z "$odd" ] && [ "$(wc -l <"$work/stream")" -gt 5 ] && ok || bad "#73-AC1.5" "requests during the recreation got something else than 200 or 502" "$odd"
+        n_stream="$(wc -l <"$work/stream")"
+        odd="$(grep -vE '^200 backend=core-api$|^502 $' "$work/stream" | sort | uniq -c | head -3)"
+        [ -z "$odd" ] && [ "$(wc -l <"$work/stream")" -gt 5 ] && ok || bad "#73-AC1.5" "requests during the recreation got something else than 200 from core-api or 502 (${n_stream:-0} requests)" "$odd"
     fi
 done
 # AC1.7: the same backend recreated twice in a row recovers both times
@@ -390,8 +395,8 @@ else bad "#73-AC4.6" "the failed build's log does not name the digest" "$(tail -
 workers="$(dc exec -T reverse-proxy sh -c "ps -o user,args | grep 'nginx: worker' | grep -v grep | awk '{print \$1}' | sort -u" 2>/dev/null | tr -d '\r')"
 [ "$workers" = nginx ] && ok || bad "#73-AC4.8" "worker processes run as nginx (found: '${workers:-none}')"
 # recorded for the runtime-hardening ticket, not a pass or fail: would the image start read-only, without capabilities, as nginx, on 8080?
-sed -e 's/listen 80;/listen 8080;/' -e '/^user nginx;/d' -e '1i pid /tmp/nginx.pid;' "$proxy_dir/nginx.conf" >"$work/hardened.conf"
-hid="$(docker run -d --read-only --cap-drop ALL --user 101:101 --tmpfs /tmp --tmpfs /var/cache/nginx \
+sed -e 's/listen 80;/listen 8080;/' -e '/^user nginx;/d' -e 's#^worker_processes auto;#pid /tmp/nginx.pid;\nworker_processes auto;#' "$proxy_dir/nginx.conf" >"$work/hardened.conf"
+hid="$(docker run -d --read-only --cap-drop ALL --user 101:101 --tmpfs /tmp --tmpfs /var/cache/nginx:uid=101,gid=101 \
     -v "$work/hardened.conf":/etc/nginx/nginx.conf:ro --entrypoint nginx "${project}-reverse-proxy" -g 'daemon off;' 2>&1)"
 sleep 2
 if [ "$(docker inspect -f '{{.State.Running}}' "$hid" 2>/dev/null)" = true ]; then

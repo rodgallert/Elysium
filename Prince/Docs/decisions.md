@@ -256,3 +256,11 @@ The reverse proxy (`${REVERSE_PROXY_PORT}:80`) and Silo (`9000`, `9001`) were pu
 - Anyone who ran the stack with the example passwords while the ports were open should change them and recreate the volumes; the README and `.env.example` say so.
 
 Not breaking: no service or client depends on the host ports (the services use the Compose network), every documented URL still works on this machine, and no configuration key changed. What stops working is reaching the stack from another device, which was never a supported use. Other compose changes (restart policies, resolver, healthchecks) wait for the Environments sprint.
+
+## 2026-11-19 — The reverse proxy re-resolves its backends; nginx moves to 1.30
+
+- **Bug:** the proxy's static `upstream` blocks were resolved once at start. After `docker compose up -d --force-recreate core-api` the proxy answered 502 until it was restarted, and it didn't start at all while a backend was missing.
+- **Fix:** Docker's embedded resolver (`resolver 127.0.0.11 valid=10s ipv6=off`) and a variable in every `proxy_pass`, so the name is looked up at request time. A recreated backend is found again within 10 s (502 at most until then), and the proxy starts with any backend down (its routes answer 502). A variable `proxy_pass` doesn't strip the matched prefix, so each location rewrites the path (`rewrite ... break`) to what the backend received before; the capture in `tools/tests/proxy-resolve/routes.capture` (recorded against the old config) proves that routes, redirects, headers and query strings are unchanged.
+- **nginx 1.27 -> 1.30 (#36):** 1.27 is an unmaintained branch. The proxy and the four frontend images now use `nginx:1.30-alpine` (the stable branch, 1.30.7), pinned by digest. nginx 1.29.7 made `proxy_http_version 1.1` the default; the proxy sets `1.0` explicitly so the backends see the same requests as before.
+- **For the runtime-hardening ticket:** the new image starts read-only, with `cap_drop: ALL`, as user 101 and on port 8080 once the `user` directive is dropped and the pid file moves to `/tmp` (checked by `tools/tests/proxy-resolve.sh`, which prints the result); on port 80 it needs `NET_BIND_SERVICE`.
+- Check: `tools/tests/proxy-resolve.sh` (Docker, about six minutes, its own Compose project).

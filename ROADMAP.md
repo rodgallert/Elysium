@@ -47,7 +47,7 @@ Prince runs as two isolated stacks, production and development, behind one loopb
 
 - [ ] Environments design record and this phase (#69)
 - [ ] Bookkeeping scripts: `tools/ticket.sh` (#70), `tools/pr.sh` (#71), `tools/wt.sh` (#72), each with a stubbed-`gh` test harness
-- [ ] Proxy resolver fix and nginx upgrade: upstreams re-resolved, images off nginx 1.27 (#73, with #36)
+- [x] Proxy resolver fix and nginx upgrade: upstreams re-resolved, images off nginx 1.27 (#73, with #36)
 - [ ] Compose health and ordering: restart policies, narrower dependencies, health timings, image-name check (#74)
 - [ ] Edge proxy: `elysium-edge` network, loopback-only bindings, Host routing with a per-environment allow-list (#75)
 - [ ] Prod/dev stacks and env files (#76)
