@@ -137,6 +137,10 @@ static_checks() {
     got="$(jq -r '.services["file-storage"].healthcheck.test | join(" ")' <<<"$cfg")"
     case "$got" in *mcli*'$$FILE_STORAGE_BUCKET'*) ok ;; *) bad "#74-AC5" "file-storage's health check confirms the bucket (got: $got)" ;; esac
 
+    # #74-AC3.3: the limit of "healthy" is stated next to the checks (a comment, so it is read from the file)
+    got="$(grep -c 'cannot see a missing application' "$compose")"
+    [ "$got" = 3 ] && grep -q 'mean the services have migrated' "$compose" && ok || bad "#74-AC3.3" "the readiness limit is stated in a comment next to each backend check and the Postgres check (backend comments: $got)"
+
     # #74-AC3.1: no password in any health command; the commands use "$$VAR", never ${VAR}
     got="$(jq -r '.services | to_entries[] | select(.value.healthcheck) | "\(.key): \(.value.healthcheck.test | join(" "))"' <<<"$cfg")"
     if grep -qF -- "$password" <<<"$got"; then bad "#74-AC3.1" "a health command contains the password (a \${VAR} expanded into the config)"; else ok; fi
@@ -207,6 +211,21 @@ wait_health() { # service status limit_s: polls until the service has that healt
         sleep 0.5
     done
     took_ms=$(($(now_ms) - start))
+    return 1
+}
+# #74-AC3.6: a check that failed shortly before an outage would shorten the time to "unhealthy"; wait until every backend's
+# FailingStreak is 0 before one starts
+wait_streaks_zero() { # limit_s
+    local i s streak all
+    for ((i = 0; i < ${1:-60} * 2; i++)); do
+        all=1
+        for s in "${backends[@]}"; do
+            streak="$(docker inspect -f '{{.State.Health.FailingStreak}}' "$(cid "$s")" 2>/dev/null)"
+            [ "$streak" = 0 ] || all=0
+        done
+        [ "$all" = 1 ] && return 0
+        sleep 0.5
+    done
     return 1
 }
 unhealthy_now() { # prints the services whose health isn't healthy
@@ -338,6 +357,7 @@ $still_not"; fi
     else bad "#74-AC1" "after Postgres was killed and restarted, not everything became healthy within 60 s" "$still_not"; fi
 
     # #74-AC1, #74-AC3.6: Postgres down for 20 s (docker stop keeps it down), then a longer outage that turns the backends unhealthy
+    wait_streaks_zero 60 || note "a backend still had failing checks before the 20 s outage"
     docker stop "$(cid postgres)" >/dev/null 2>&1
     sleep 20
     docker start "$(cid postgres)" >/dev/null 2>&1
@@ -346,6 +366,7 @@ $still_not"; fi
         [ "$took_ms" -le 30000 ] && ok || bad "#74-AC1.6" "after a 20 s outage everything was healthy $(secs "$took_ms") s after Postgres (limit 30 s)" "$still_not"
     else bad "#74-AC1.6" "after a 20 s outage not everything became healthy again" "$still_not"; fi
 
+    wait_streaks_zero 60 || bad "#74-AC3.6" "a backend still had failing checks before the long outage"
     docker stop "$(cid postgres)" >/dev/null 2>&1
     start="$(now_ms)"
     for s in "${backends[@]}"; do
@@ -481,11 +502,18 @@ $still_not"
     # nothing exits after starting, except the env-check one-shot that others wait for
     exited="$(dc ps -a --status exited --format '{{.Service}}' | grep -v '^env-check$' | tr '\n' ' ')"
     [ -z "$exited" ] && ok || bad "#74-AC5" "no service exits after starting (exited: $exited)"
-    bucket_exists && ok || bad "#74-AC5" "the bucket exists when file-storage is healthy"
+    # #74-AC5.9: from empty volumes
+    bucket_exists && ok || bad "#74-AC5.9" "the bucket exists when file-storage is healthy, from empty volumes"
     grep -qiE 'bucket .*(created|already exists)' <<<"$(dc logs file-storage 2>&1)" && ok || bad "#74-AC5.10" "the log says the bucket was created or already exists"
-    # an existing bucket is fine: the storage restarts on its volume and is healthy again
+    # #74-AC5.9: from an existing volume with the same credentials: down keeps the volume, up --wait exits 0, the bucket is there
+    dc down --timeout 2 >/dev/null 2>&1
+    up_wait 90
+    rc=$?
+    if [ "$rc" -eq 0 ] && bucket_exists; then ok; else bad "#74-AC5.9" "up -d --wait from an existing volume exits 0 with the bucket in place (exit $rc)" "$still_not"; fi
+    grep -qiE 'bucket .*already exists' <<<"$(dc logs file-storage 2>&1)" && ok || bad "#74-AC5.9" "the log says the bucket already exists on an existing volume"
+    # #74-AC5.7: an existing bucket is fine: the storage restarts on its volume and is healthy again
     docker restart "$(cid file-storage)" >/dev/null 2>&1
-    if wait_health file-storage healthy 60 && bucket_exists; then ok; else bad "#74-AC5" "file-storage restarted with its bucket already there did not become healthy (health: $(health_of file-storage))"; fi
+    if wait_health file-storage healthy 60 && bucket_exists; then ok; else bad "#74-AC5.7" "file-storage restarted with its bucket already there did not become healthy (health: $(health_of file-storage))"; fi
     dc logs file-storage 2>&1 | grep -qF -- "$fs_password" && bad "#74-AC5" "file-storage's log contains its password" || ok
     # #74-AC5.10: the log says whether the bucket was created or already there; #74-AC5.8: no password in the command line
     if grep -qiE 'bucket .*already exists' <<<"$(dc logs file-storage 2>&1)"; then ok; else bad "#74-AC5.10" "the log of the restarted file-storage says the bucket already exists"; fi

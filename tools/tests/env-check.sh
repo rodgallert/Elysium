@@ -74,6 +74,11 @@ passes "the example values pass"
 
 # Silo's rules
 passes "Silo password of exactly 8 characters" FILE_STORAGE_ROOT_PASSWORD=12345678
+# #74-AC5: the bucket creation puts the credentials in a URL (MC_HOST_local): a colon splits user from password and
+# fails every call ("security token invalid", measured on the pinned image); @ / # % ? work as they are
+fails "colon in the Silo password" FILE_STORAGE_ROOT_PASSWORD 'FILE_STORAGE_ROOT_PASSWORD=ab:cd1234xyz'
+fails "colon in the Silo user" FILE_STORAGE_ROOT_USER 'FILE_STORAGE_ROOT_USER=prince:admin'
+passes "Silo password with @ / # % ?" 'FILE_STORAGE_ROOT_PASSWORD=ab@cd/12#3%4?x'
 fails "Silo password of 7 characters" FILE_STORAGE_ROOT_PASSWORD FILE_STORAGE_ROOT_PASSWORD=1234567
 fails "empty Silo password" FILE_STORAGE_ROOT_PASSWORD FILE_STORAGE_ROOT_PASSWORD=
 fails "missing Silo password" FILE_STORAGE_ROOT_PASSWORD FILE_STORAGE_ROOT_PASSWORD
