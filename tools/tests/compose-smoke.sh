@@ -7,7 +7,8 @@
 # Usage: tools/tests/compose-smoke.sh            every phase (about 15 minutes, 5 of them the observation window)
 # COMPOSE_SMOKE_ONLY=static   only the checks on `docker compose config` (seconds, nothing is started)
 # COMPOSE_SMOKE_ONLY=stub     only the stub services of the health check boundaries (about 90 s)
-# COMPOSE_SMOKE_ONLY=live     only the real stack
+# COMPOSE_SMOKE_ONLY=live     only the real stack (without the bucket phase)
+# COMPOSE_SMOKE_ONLY=bucket   only the file storage's bucket (#74-AC5, about 3 minutes)
 # COMPOSE_SMOKE_OBSERVE=<s>   the RestartCount observation window of #74-AC1 (default 300)
 # COMPOSE_SMOKE_RUNS=<n>      cold starts measured for the budget and the check durations (default 3)
 # COMPOSE_SMOKE_PROJECT       overrides the project name
@@ -69,7 +70,7 @@ now_ms() { date +%s%3N; }
 secs() { awk -v ms="$1" 'BEGIN { printf "%.1f", ms / 1000 }'; }
 
 # --- what the Compose file must say ------------------------------------------------------------------------------------
-oneshots=(env-check file-storage-init)
+oneshots=(env-check)
 longrunning=(postgres core-api checkout-api jobs-api file-storage core-web-vue checkout-web-vue core-web-react checkout-web-react reverse-proxy)
 backends=(core-api checkout-api jobs-api)
 frontends=(core-web-vue checkout-web-vue core-web-react checkout-web-react)
@@ -83,7 +84,6 @@ core-web-react
 core-web-vue
 env-check
 file-storage env-check:service_completed_successfully
-file-storage-init env-check:service_completed_successfully,file-storage:service_healthy
 jobs-api env-check:service_completed_successfully,postgres:service_healthy
 postgres env-check:service_completed_successfully
 reverse-proxy '
@@ -132,6 +132,10 @@ static_checks() {
     "10s | "*pg_isready*"select 1"*) ok ;;
     *) bad "#74-AC3" "postgres: start_period 10s and a check with pg_isready and select 1 (got: $got)" ;;
     esac
+
+    # #74-AC5: the file storage's health check confirms the bucket; no password in it (it reads the environment)
+    got="$(jq -r '.services["file-storage"].healthcheck.test | join(" ")' <<<"$cfg")"
+    case "$got" in *mcli*'$$FILE_STORAGE_BUCKET'*) ok ;; *) bad "#74-AC5" "file-storage's health check confirms the bucket (got: $got)" ;; esac
 
     # #74-AC3.1: no password in any health command; the commands use "$$VAR", never ${VAR}
     got="$(jq -r '.services | to_entries[] | select(.value.healthcheck) | "\(.key): \(.value.healthcheck.test | join(" "))"' <<<"$cfg")"
@@ -220,14 +224,12 @@ wait_all_healthy() { # limit_s: sets $took_ms and $still_not
         sleep 0.5
     done
 }
-# `docker compose up -d --wait` exits 1 with "container ...-file-storage-init-1 exited (0)" as soon as no service waits for
-# the one-shot bucket step (#74-AC2: core-api no longer does), and then returns before the backends are healthy. So the
-# budget is measured as `up -d` plus the wait for every long-running service to be healthy: sets $up_out, $took_ms (the
-# whole time) and $still_not; returns 0 when `up -d` succeeded and every service became healthy within the limit.
+# `up -d --wait` and then the wait for every long-running service to be healthy (#74-AC5: no service exits after starting, so
+# --wait returns 0). Sets $up_out, $took_ms (the whole time) and $still_not; returns 0 when it did and every service is healthy.
 up_wait() { # limit_s
     local start rc
     start="$(now_ms)"
-    up_out="$(dc up -d 2>&1)"
+    up_out="$(dc up -d --wait 2>&1)"
     rc=$?
     wait_all_healthy "${1:-90}" || rc=1
     took_ms=$(($(now_ms) - start))
@@ -408,12 +410,12 @@ $still_not"; fi
 
     # #74-AC2.3: Silo that never serves for the whole run; everything else still starts
     dc down -v --remove-orphans --timeout 2 >/dev/null 2>&1
-    out="$(dcf silo-down.yml up -d 2>&1)"
+    out="$(dcf silo-down.yml up -d --wait 2>&1)"
     rc=$?
     say "silo-down up -d exit $rc; the message: $(grep -iE 'dependency failed|unhealthy' <<<"$out" | head -2 | tr '\n' ' ')"
     # #74-AC2.10: the failed dependency is named by Compose
     [ "$rc" -ne 0 ] && grep -qE 'file-storage' <<<"$out" && ok || bad "#74-AC2.10" "Compose names file-storage as the failed dependency (exit $rc)"
-    # (file-storage itself and its one-shot are excluded; everything else must be up and healthy)
+    # (file-storage itself is excluded; everything else must be up and healthy)
     local expect=(postgres core-api checkout-api jobs-api core-web-vue checkout-web-vue core-web-react checkout-web-react reverse-proxy)
     local bad_list=""
     for ((i = 0; i < 90; i++)); do
@@ -427,27 +429,66 @@ $still_not"; fi
         [ "$(code "$r")" = 200 ] && ok || bad "#74-AC2.3" "$r answers 200 with Silo down for the whole run (got $(code "$r"))"
     done
 
-    # #74-AC2.6: file-storage-init failing does not stop core-api from becoming healthy
-    dc down -v --remove-orphans --timeout 2 >/dev/null 2>&1
-    out="$(dcf init-wrong-password.yml up -d 2>&1)"
-    rc=$?
-    wait_health core-api healthy 90 && ok || bad "#74-AC2.6" "core-api did not become healthy with file-storage-init failing (health: $(health_of core-api))" "$(grep -iE 'dependency|failed' <<<"$out" | head -3)"
-    say "init with a wrong password: up -d exit $rc, init exit $(docker inspect -f '{{.State.ExitCode}}' "$(cid file-storage-init)" 2>/dev/null)"
-    dc down -v --remove-orphans --timeout 2 >/dev/null 2>&1
-
     # #74-AC2.9: a missing key still fails before the services that use its values start
     grep -v '^POSTGRES_PASSWORD=' "$env_file" >"$work/env-missing"
     local nproject="${project}-noenv"
     out="$(docker compose -p "$nproject" --env-file "$work/env-missing" -f "$compose" -f "$fixture/override.yml" up -d 2>&1)"
     rc=$?
     [ "$rc" -ne 0 ] && ok || bad "#74-AC2.9" "up -d with POSTGRES_PASSWORD missing was not refused"
-    for s in postgres jobs-api file-storage file-storage-init; do
+    for s in postgres jobs-api file-storage; do
         n="$(docker ps -aq --filter "label=com.docker.compose.project=$nproject" --filter "label=com.docker.compose.service=$s" --filter status=running | wc -l)"
         [ "$n" = 0 ] && ok || bad "#74-AC2.9" "$s started although env-check failed"
     done
     out="$(docker compose -p "$nproject" --env-file "$work/env-missing" -f "$compose" -f "$fixture/override.yml" logs env-check 2>&1)"
     grep -q 'env-check: POSTGRES_PASSWORD' <<<"$out" && ok || bad "#74-AC2.9" "env-check's log names the missing key" "$out"
     docker compose -p "$nproject" --env-file "$work/env-missing" -f "$compose" -f "$fixture/override.yml" down -v --remove-orphans --timeout 2 >/dev/null 2>&1
+}
+
+# --- file storage is healthy only once its bucket exists (#74-AC5) -----------------------------------------------------------
+fs_password="ChangeMe123!"
+bucket_exists() { docker exec "$(cid file-storage)" sh -c 'MC_HOST_local="http://$FILE_STORAGE_ROOT_USER:$FILE_STORAGE_ROOT_PASSWORD@127.0.0.1:9000" mcli stat "local/$FILE_STORAGE_BUCKET"' >/dev/null 2>&1; }
+failed_creation() { # override-file description
+    local out id cmdlines
+    dc down -v --remove-orphans --timeout 2 >/dev/null 2>&1
+    dcf "$1" up -d >/dev/null 2>&1
+    wait_health core-api healthy 90 && ok || bad "#74-AC2.6" "core-api did not become healthy with the bucket creation failing ($2; health: $(health_of core-api))"
+    sleep 20
+    id="$(cid file-storage)"
+    [ "$(health_of file-storage)" != healthy ] && ok || bad "#74-AC5.6" "file-storage reports healthy although its bucket creation fails ($2)"
+    out="$(dcf "$1" logs file-storage 2>&1)"
+    grep -qiE 'bucket creation failed' <<<"$out" && ok || bad "#74-AC5.6" "the log names the failed bucket creation ($2)" "$(tail -3 <<<"$out")"
+    if grep -qF -e "$fs_password" -e another-Password-9 <<<"$out"; then bad "#74-AC5.10" "the log of a failed creation contains a password ($2)"; else ok; fi
+    if docker inspect -f '{{json .State.Health}}' "$id" 2>/dev/null | grep -qF -e "$fs_password" -e another-Password-9; then bad "#74-AC5.10" "the health log contains a password ($2)"; else ok; fi
+    # #74-AC5.8: while the creation is being retried, no process has the password in its command line
+    cmdlines="$(docker exec "$id" sh -c 'for f in /proc/[0-9]*/cmdline; do tr "\0" " " <"$f"; echo; done' 2>/dev/null)"
+    if [ -z "$cmdlines" ]; then bad "#74-AC5.8" "could not read the process list ($2)"; elif grep -qF -e "$fs_password" -e another-Password-9 <<<"$cmdlines"; then bad "#74-AC5.8" "a command line holds the password ($2)"; else ok; fi
+    dc down -v --remove-orphans --timeout 2 >/dev/null 2>&1
+}
+bucket_checks() {
+    local rc out s exited id
+    dc build >"$work/build.log" 2>&1 || { bad "#74-AC5" "docker compose build failed" "$(tail -5 "$work/build.log")"; return; }
+    dc down -v --remove-orphans --timeout 2 >/dev/null 2>&1
+    up_wait 90
+    rc=$?
+    [ "$rc" -eq 0 ] && ok || bad "#74-AC5" "docker compose up -d --wait exits 0 with every service healthy (exit $rc)" "$(tail -3 <<<"$up_out")
+$still_not"
+    # nothing exits after starting, except the env-check one-shot that others wait for
+    exited="$(dc ps -a --status exited --format '{{.Service}}' | grep -v '^env-check$' | tr '\n' ' ')"
+    [ -z "$exited" ] && ok || bad "#74-AC5" "no service exits after starting (exited: $exited)"
+    bucket_exists && ok || bad "#74-AC5" "the bucket exists when file-storage is healthy"
+    grep -qiE 'bucket .*(created|already exists)' <<<"$(dc logs file-storage 2>&1)" && ok || bad "#74-AC5.10" "the log says the bucket was created or already exists"
+    # an existing bucket is fine: the storage restarts on its volume and is healthy again
+    docker restart "$(cid file-storage)" >/dev/null 2>&1
+    if wait_health file-storage healthy 60 && bucket_exists; then ok; else bad "#74-AC5" "file-storage restarted with its bucket already there did not become healthy (health: $(health_of file-storage))"; fi
+    dc logs file-storage 2>&1 | grep -qF -- "$fs_password" && bad "#74-AC5" "file-storage's log contains its password" || ok
+    # #74-AC5.10: the log says whether the bucket was created or already there; #74-AC5.8: no password in the command line
+    if grep -qiE 'bucket .*already exists' <<<"$(dc logs file-storage 2>&1)"; then ok; else bad "#74-AC5.10" "the log of the restarted file-storage says the bucket already exists"; fi
+    id="$(cid file-storage)"
+    if docker inspect -f '{{json .Config.Entrypoint}} {{json .Config.Cmd}} {{json .Args}}' "$id" | grep -qF -- "$fs_password"; then bad "#74-AC5.8" "the password is in the container's Config.Entrypoint, Cmd or Args"; else ok; fi
+    # a failed creation: wrong server password (#74-AC5.6) and a bucket name Silo refuses (#74-AC5.2)
+    failed_creation bucket-wrong-password.yml "wrong root password"
+    failed_creation bucket-invalid.yml "bucket name Silo refuses"
+    dc down -v --remove-orphans --timeout 2 >/dev/null 2>&1
 }
 
 case "$only" in
@@ -458,6 +499,9 @@ all | stub) stub_checks ;;
 esac
 case "$only" in
 all | live) live_checks ;;
+esac
+case "$only" in
+all | bucket) bucket_checks ;;
 esac
 
 # #74-AC1.10: nothing in this output is a value from the .env

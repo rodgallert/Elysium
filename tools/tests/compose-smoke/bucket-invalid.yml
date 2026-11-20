@@ -1,0 +1,5 @@
+# file-storage with a bucket name S3 refuses, so its bucket creation fails (#74-AC5). Used on top of override.yml.
+services:
+  file-storage:
+    environment:
+      FILE_STORAGE_BUCKET: Invalid_Bucket
