@@ -78,7 +78,7 @@ f="$(compose Prince "$(svc core-api "postgres:17" build)")"
 run_case "#74-AC4" "a build and an image that disagree fail" fail "build and image disagree" "$f"
 
 f="$(compose Prince "$(svc other "$ours/elysium-prince-other:main")")"
-run_case "#74-AC4" "an image of ours that no Compose build publishes fails" fail "published" "$f"
+run_case "#74-AC4" "an image of ours that no Compose build publishes fails" fail "publishes" "$f"
 
 f="$(compose Prince "$(svc core-api "$ours/elysium-prince-core-api:main" build)
 $(svc copy "$ours/elysium-prince-core-api:main")")"
