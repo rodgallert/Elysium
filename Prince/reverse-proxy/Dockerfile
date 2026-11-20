@@ -1,3 +1,3 @@
-FROM nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+FROM nginx:1.30-alpine@sha256:3bc3836dc0be3b811f238210360bf8e7ca8a2d0effdae46160bf1f3578710051
 COPY nginx.conf /etc/nginx/nginx.conf
 EXPOSE 80
