@@ -99,15 +99,18 @@ declare -A backend_of=(
 
 # (#73-AC1.4)
 # poll_until_200 <route>: polls once a second until 200 or the limit; sets $elapsed_ms, $seen (statuses in order) and
-# $stray (a status other than 200 and 502, or an answer from the wrong backend)
+# $stray (a status other than 200, 502 and 504, an answer from the wrong backend, or one request that took over 3500 ms)
 elapsed_ms=0 seen="" stray=""
 poll_until_200() {
-    local route="$1" want="$2" start status body
+    local route="$1" want="$2" start status body took
     start="$(now_ms)"
     seen="" stray=""
     while :; do
-        body="$(curl -s --max-time 10 --path-as-is -w '\n%{http_code}' "$base$route" 2>/dev/null)"
+        body="$(curl -s --max-time 10 --path-as-is -w '\n%{http_code} %{time_total}' "$base$route" 2>/dev/null)"
         status="${body##*$'\n'}"
+        took="$(awk -v t="${status#* }" 'BEGIN { printf "%d", t * 1000 }')"
+        status="${status%% *}"
+        [ "$took" -le 3500 ] || stray+=" slow(${took}ms)"
         seen+=" $status"
         elapsed_ms=$(($(now_ms) - start))
         if [ "$status" = 200 ]; then
@@ -192,6 +195,9 @@ route_cases() {
         printf '%s\t%s\t\n' "encslash$name" "${r}a%2Fb"
         printf '%s\t%s\t\n' "nlmid$name" "${r}foo%0Abar"  # an encoded newline: PCRE's . skips it, so a rewrite without (?s) misses
         printf '%s\t%s\t\n' "nlend$name" "${r}foo%0A"
+        printf '%s\t%s\t\n' "crlf$name" "${r}foo%0D%0Abar" # an encoded CRLF stays encoded all the way to the backend
+        # raw characters nginx re-encodes in the request line it sends (\ " < > ` | ^), as it did before the change
+        printf '%s\t%s\t\n' "rawchars$name" "${r}"'a\b"c<d>e`f|g^h'
         printf '%s\t%s\t\n' "redir$name" "${r}redir"
         printf '%s\t%s\t%s\n' "headers$name" "${r}h" "-H|X-Forwarded-For: 203.0.113.9|-H|X-Forwarded-Proto: spoofed"
         printf '%s\t%s\t\n' "long8k$name" "${r}$(long_a 8100)"
@@ -541,14 +547,15 @@ echo "== #73-AC1: recreate backends"
 check "#73-AC1.2" "the resolver's valid= is set in the config (read: '${config_valid:-nothing}')" test -n "$config_valid"
 for b in "${backends[@]}"; do
     if [ "$b" = core-api ]; then
-        # AC1.5: five requests per second during the recreation, only 200 or 502 and never another backend's answer
+        # AC1.5: five requests per second during the recreation, only 200, 502 or 504, each within 3500 ms, and never another backend's answer
         : >"$work/stream"
         touch "$work/streaming"
         (
             while [ -e "$work/streaming" ]; do
                 ( # each request in its own process: a slow answer must not hold back the next one
-                    reply="$(curl -s --max-time 12 -w '\n%{http_code}' "$base/api/x" 2>/dev/null)"
-                    echo "${reply##*$'\n'} $(grep -o 'backend=[a-z-]*' <<<"$reply")" >>"$work/stream"
+                    reply="$(curl -s --max-time 12 -w '\n%{http_code} %{time_total}' "$base/api/x" 2>/dev/null)"
+                    # status, backend named in the body (empty for an error page), total time in ms
+                    echo "${reply##*$'\n'}" | awk -v b="$(grep -o 'backend=[a-z-]*' <<<"$reply")" '{ printf "%s %s %d\n", $1, b, $2 * 1000 }' >>"$work/stream"
                 ) &
                 sleep 0.2
             done
@@ -563,7 +570,7 @@ for b in "${backends[@]}"; do
         rm -f "$work/streaming"
         wait
         n_stream="$(wc -l <"$work/stream")"
-        odd="$(grep -vE '^200 backend=core-api$|^50[24] $' "$work/stream" | sort | uniq -c | head -3)"
+        odd="$(awk '!(($1 == 200 && $2 == "backend=core-api") || (($1 == 502 || $1 == 504) && NF == 2)) || $NF > 3500 { print }' "$work/stream" | sort | uniq -c | head -3)"
         [ -z "$odd" ] && [ "$(wc -l <"$work/stream")" -gt 5 ] && ok || bad "#73-AC1.5" "requests during the recreation got something else than 200 from core-api, 502 or 504 (${n_stream:-0} requests)" "$odd"
     fi
 done
@@ -585,8 +592,9 @@ if grep -q 'checkout-api' <<<"$get_logged" && ! grep -qi 'canary-secret-73' <<<"
 else bad "#73-AC1.10" "error log of a failed resolution names the upstream and holds no request headers" "${get_logged:-<no 'could not be resolved' line>}"; fi
 # AC1.6: removed backend, 502 and never another backend's content
 dc rm -sf checkout-api >/dev/null 2>&1
-body="$(curl -s --max-time 10 -w '\n%{http_code}' "$base/api/checkout/x")"
-[ "${body##*$'\n'}" = 502 ] && ! grep -q 'backend=' <<<"$body" && ok || bad "#73-AC1.6" "removed backend: 502 with nothing from another backend" "${body: -300}"
+body="$(curl -s --max-time 10 -w '\n%{http_code} %{time_total}' "$base/api/checkout/x")"
+code_ms="$(awk -v l="${body##*$'\n'}" 'BEGIN { split(l, a, " "); printf "%s %d", a[1], a[2] * 1000 }')"
+{ [ "${code_ms%% *}" = 502 ] || [ "${code_ms%% *}" = 504 ]; } && [ "${code_ms##* }" -le 3500 ] && ! grep -q 'backend=' <<<"$body" && ok || bad "#73-AC1.6" "removed backend: 502 (504 while a stale address is cached) within 3500 ms with nothing from another backend (got $code_ms)" "${body: -300}"
 dc up -d --no-deps checkout-api >/dev/null 2>&1
 wait_healthy checkout-api
 recovers "#73-AC1.3" "a backend stopped and started again recovers" checkout-api
@@ -623,7 +631,7 @@ timeout_section
 # rewrite can't match (the 400 comes before any lookup, so no backend is needed) must answer 400, not forward the raw URI.
 echo "== fail-closed: a rewrite that misses answers 400"
 sed 's#rewrite "(?s)^/api/(\.\*)$"#rewrite "(?s)^/nomatch/(.*)$"#' "$proxy_dir/nginx.conf" >"$work/miss.conf"
-cid_miss="$(docker run -d --entrypoint nginx -v "$work/miss.conf":/etc/nginx/nginx.conf:ro -p 127.0.0.1::80 "${project}-reverse-proxy" -g 'daemon off;' 2>/dev/null)"
+cid_miss="$(docker run -d --label "proxytest=$project" --entrypoint nginx -v "$work/miss.conf":/etc/nginx/nginx.conf:ro -p 127.0.0.1::80 "${project}-reverse-proxy" -g 'daemon off;' 2>/dev/null)"
 sleep 2
 miss_port="$(docker port "$cid_miss" 80 2>/dev/null | head -1 | sed 's/.*://')"
 if grep -q nomatch "$work/miss.conf" && [ "$(curl -s -o /dev/null --max-time 10 -w '%{http_code}' "http://127.0.0.1:$miss_port/api/x")" = 400 ]; then ok
