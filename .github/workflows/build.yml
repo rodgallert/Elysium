@@ -278,6 +278,8 @@ jobs:
         run: tools/tests/ci-tools.sh
       - name: Prince .env check tests
         run: tools/tests/env-check.sh
+      - name: File storage redaction tests
+        run: tools/tests/file-storage-entrypoint.sh
       - name: Ticket script tests
         run: tools/tests/ticket-tools.sh
       - name: Compose image-name check tests

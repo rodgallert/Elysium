@@ -7,7 +7,15 @@
 # line or process list. mcli's message is logged with the password replaced, one line each time the reason changes; the
 # creation is retried every 2 s, and until it works the health check keeps the service unhealthy.
 # Usage: file-storage-entrypoint.sh <arguments of the Silo image's entrypoint, e.g. server /data ...>
-# Limit: the credentials sit in a URL, so a user name or password with @ / : % ? # would need percent-encoding.
+# Limit: the credentials sit in a URL, so a colon in the user name or password breaks every call ("security token
+# invalid", also when written as %3A); env-check refuses it. @ / # % ? work as they are; percent-encoding them breaks the login.
+
+# the message with the password replaced (quoted, so [ ] * ? in a password are literal, not a pattern)
+redact() { # message
+    printf '%s' "${1//"$FILE_STORAGE_ROOT_PASSWORD"/***}"
+}
+# tools/tests/file-storage-entrypoint.sh sources the file for redact() only
+[ "${FILE_STORAGE_ENTRYPOINT_SOURCE_ONLY:-}" = 1 ] && return 0
 
 /usr/bin/docker-entrypoint.sh "$@" &
 server=$!
@@ -28,7 +36,7 @@ bucket="local/$FILE_STORAGE_BUCKET"
             echo "file-storage: bucket $FILE_STORAGE_BUCKET created"
             exit 0
         fi
-        reason="${err//$FILE_STORAGE_ROOT_PASSWORD/***}"
+        reason="$(redact "$err")"
         reason="${reason%%$'\n'*}"
         if [ "$reason" != "$last" ]; then
             echo "file-storage: bucket creation failed: $reason"
@@ -40,6 +48,7 @@ bucket="local/$FILE_STORAGE_BUCKET"
 
 wait "$server"
 status=$?
-# a TERM interrupts the first wait: wait again for the server to finish, then report its status
+# A TERM interrupts the first wait (its status is then 143, 128 + 15, and the container exits 143); the trap has passed the
+# TERM on, so wait again for the server to finish before leaving. If the server exits by itself, its own status is kept.
 wait "$server" 2>/dev/null
 exit "$status"
