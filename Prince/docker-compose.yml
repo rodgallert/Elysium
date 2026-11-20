@@ -135,6 +135,12 @@ services:
     environment:
       MINIO_ROOT_USER: ${FILE_STORAGE_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${FILE_STORAGE_ROOT_PASSWORD}
+      # read by the entrypoint wrapper and the health check, which hand them to mcli through the environment
+      FILE_STORAGE_ROOT_USER: ${FILE_STORAGE_ROOT_USER}
+      FILE_STORAGE_ROOT_PASSWORD: ${FILE_STORAGE_ROOT_PASSWORD}
+      FILE_STORAGE_BUCKET: ${FILE_STORAGE_BUCKET}
+    # The wrapper starts the server and creates the bucket (idempotently) with the image's bundled client
+    entrypoint: ["/bin/bash", "/file-storage-entrypoint.sh"]
     command: server /data --console-address ":9001"
     # The services reach the S3 API (9000) on the Compose network, so it isn't published. The console is, on this
     # machine only.
@@ -142,38 +148,18 @@ services:
       - "127.0.0.1:9001:9001"
     volumes:
       - prince-filestorage-data:/data
+      - ./file-storage-entrypoint.sh:/file-storage-entrypoint.sh:ro
     depends_on:
       env-check:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      # Healthy only once the server answers and the bucket exists; whatever needs the bucket waits for
+      # `file-storage: service_healthy`. The credentials come from the environment ("$$VAR"), never from the command.
+      test: ["CMD-SHELL", "curl -fs -m 3 -o /dev/null http://localhost:9000/minio/health/live && MC_HOST_local=\"http://$$FILE_STORAGE_ROOT_USER:$$FILE_STORAGE_ROOT_PASSWORD@127.0.0.1:9000\" mcli stat \"local/$$FILE_STORAGE_BUCKET\" >/dev/null 2>&1"]
       interval: 5s
       timeout: 5s
       retries: 10
     restart: unless-stopped
-
-  file-storage-init:
-    # One-shot: it exits 0 once the bucket exists and is not started again by a restart policy
-    restart: "no"
-    # Same image as the server: its bundled client (mcli) creates the bucket
-    image: pgsty/silo:RELEASE.2026-11-12T00-00-00Z
-    # The values come in through the environment and are quoted, so a space or a shell character in one can't
-    # break the command or add to it
-    environment:
-      FILE_STORAGE_ROOT_USER: ${FILE_STORAGE_ROOT_USER}
-      FILE_STORAGE_ROOT_PASSWORD: ${FILE_STORAGE_ROOT_PASSWORD}
-      FILE_STORAGE_BUCKET: ${FILE_STORAGE_BUCKET}
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        mcli alias set local http://file-storage:9000 "$$FILE_STORAGE_ROOT_USER" "$$FILE_STORAGE_ROOT_PASSWORD" &&
-        mcli mb --ignore-existing "local/$$FILE_STORAGE_BUCKET"
-    depends_on:
-      env-check:
-        condition: service_completed_successfully
-      file-storage:
-        condition: service_healthy
 
   core-web-vue:
     build:
