@@ -61,12 +61,13 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      # Passes when /health answers and postgres:5432 accepts a TCP connection (telnet:// is curl's bare connect, no
-      # byte is sent), so a backend turns unhealthy during a Postgres outage. It cannot see a missing application
+      # Passes when /health answers and postgres:5432 accepts a TCP connection (bash's /dev/tcp: a bare connect that
+      # sends nothing; the image's sh is dash, which has no /dev/tcp), so a backend turns unhealthy during a Postgres
+      # outage. It cannot see a missing application
       # database or a migration still running: that is the /ready endpoint of the Prince design sprint. Both calls
       # stay inside the 3 s timeout; the failures of the first 30 s are not counted, and the check runs every 2 s
       # until the first success.
-      test: ["CMD-SHELL", "curl -fs -m 2 -o /dev/null http://localhost:8080/health && curl -s -m 2 telnet://postgres:5432 </dev/null"]
+      test: ["CMD-SHELL", "curl -fs -m 2 -o /dev/null http://localhost:8080/health && bash -c 'exec 3<>/dev/tcp/postgres/5432'"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -85,12 +86,13 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      # Passes when /health answers and postgres:5432 accepts a TCP connection (telnet:// is curl's bare connect, no
-      # byte is sent), so a backend turns unhealthy during a Postgres outage. It cannot see a missing application
+      # Passes when /health answers and postgres:5432 accepts a TCP connection (bash's /dev/tcp: a bare connect that
+      # sends nothing; the image's sh is dash, which has no /dev/tcp), so a backend turns unhealthy during a Postgres
+      # outage. It cannot see a missing application
       # database or a migration still running: that is the /ready endpoint of the Prince design sprint. Both calls
       # stay inside the 3 s timeout; the failures of the first 30 s are not counted, and the check runs every 2 s
       # until the first success.
-      test: ["CMD-SHELL", "curl -fs -m 2 -o /dev/null http://localhost:8080/health && curl -s -m 2 telnet://postgres:5432 </dev/null"]
+      test: ["CMD-SHELL", "curl -fs -m 2 -o /dev/null http://localhost:8080/health && bash -c 'exec 3<>/dev/tcp/postgres/5432'"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -113,12 +115,13 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      # Passes when /health answers and postgres:5432 accepts a TCP connection (telnet:// is curl's bare connect, no
-      # byte is sent), so a backend turns unhealthy during a Postgres outage. It cannot see a missing application
+      # Passes when /health answers and postgres:5432 accepts a TCP connection (bash's /dev/tcp: a bare connect that
+      # sends nothing; the image's sh is dash, which has no /dev/tcp), so a backend turns unhealthy during a Postgres
+      # outage. It cannot see a missing application
       # database or a migration still running: that is the /ready endpoint of the Prince design sprint. Both calls
       # stay inside the 3 s timeout; the failures of the first 30 s are not counted, and the check runs every 2 s
       # until the first success.
-      test: ["CMD-SHELL", "curl -fs -m 2 -o /dev/null http://localhost:8080/health && curl -s -m 2 telnet://postgres:5432 </dev/null"]
+      test: ["CMD-SHELL", "curl -fs -m 2 -o /dev/null http://localhost:8080/health && bash -c 'exec 3<>/dev/tcp/postgres/5432'"]
       interval: 10s
       timeout: 3s
       retries: 3

@@ -119,7 +119,7 @@ static_checks() {
         # #74-AC3.4: start_interval must reach the config (older Compose ignores it silently)
         jq -e --arg s "$svc" '.services[$s].healthcheck | has("start_interval")' <<<"$cfg" >/dev/null && ok || bad "#74-AC3.4" "$svc: start_interval is missing from docker compose config (Compose older than 2.22 ignores it)"
         # #74-AC3: the check fails when postgres:5432 does not accept a connection
-        jq -e --arg s "$svc" '.services[$s].healthcheck.test | join(" ") | test("postgres:5432")' <<<"$cfg" >/dev/null && ok || bad "#74-AC3" "$svc check does not connect to postgres:5432"
+        jq -e --arg s "$svc" '.services[$s].healthcheck.test | join(" ") | test("postgres[:/]5432")' <<<"$cfg" >/dev/null && ok || bad "#74-AC3" "$svc check does not connect to postgres:5432"
     done
     for svc in "${frontends[@]}"; do
         got="$(jq -r --arg s "$svc" '.services[$s].healthcheck | [.interval, .timeout, .retries] | join(" ")' <<<"$cfg")"
@@ -220,6 +220,19 @@ wait_all_healthy() { # limit_s: sets $took_ms and $still_not
         sleep 0.5
     done
 }
+# `docker compose up -d --wait` exits 1 with "container ...-file-storage-init-1 exited (0)" as soon as no service waits for
+# the one-shot bucket step (#74-AC2: core-api no longer does), and then returns before the backends are healthy. So the
+# budget is measured as `up -d` plus the wait for every long-running service to be healthy: sets $up_out, $took_ms (the
+# whole time) and $still_not; returns 0 when `up -d` succeeded and every service became healthy within the limit.
+up_wait() { # limit_s
+    local start rc
+    start="$(now_ms)"
+    up_out="$(dc up -d 2>&1)"
+    rc=$?
+    wait_all_healthy "${1:-90}" || rc=1
+    took_ms=$(($(now_ms) - start))
+    return "$rc"
+}
 # #74-AC1.10: per service RestartCount, last exit code and health, never a value from the .env
 summary() {
     local s id line
@@ -245,6 +258,7 @@ login_note() {
     [ "${n:-0}" -gt 0 ] && note "postgres rejected $n logins: a volume created with other credentials? (down -v recreates it)"
     return 0
 }
+crash_postgres() { docker exec -u postgres "$(cid postgres)" pg_ctl stop -m immediate -D /var/lib/postgresql/data >/dev/null 2>&1; }
 sql() { docker exec "$(cid postgres)" psql -U prince -d "${2:-prince}" -Atc "$1" 2>/dev/null; }
 tables() { sql "select schemaname || '.' || tablename from pg_tables where schemaname not in ('pg_catalog', 'information_schema') order by 1"; }
 base="http://127.0.0.1:$port"
@@ -266,23 +280,24 @@ live_checks() {
 
     dc build >"$work/build.log" 2>&1 || { bad "#74-AC3" "docker compose build failed" "$(tail -5 "$work/build.log")"; return; }
 
-    # #74-AC1.7: Postgres killed during the first boot; the second boot ends healthy with the same schema as a clean boot
+    # #74-AC1.7: Postgres crashed during the first boot; the second boot ends healthy with the same schema as a clean boot
     dc down -v --remove-orphans --timeout 2 >/dev/null 2>&1
     dc up -d >"$work/up.log" 2>&1
-    docker kill "$(cid postgres)" >/dev/null 2>&1
-    if wait_all_healthy 120; then ok; else bad "#74-AC1.7" "after Postgres was killed during the first boot, the stack did not become healthy by itself" "$still_not"; fi
+    crash_postgres
+    if wait_all_healthy 120; then ok; else bad "#74-AC1.7" "after Postgres was crashed during the first boot, the stack did not become healthy by itself" "$still_not"; fi
     schema_killed="$(tables)"
 
     # cold starts, from empty volumes, measured (#74-AC3: recorded, not gated)
     for ((i = 1; i <= runs; i++)); do
         dc down -v --remove-orphans --timeout 2 >/dev/null 2>&1
-        t="$(now_ms)"
-        out="$(dc up -d --wait 2>&1)"
+        up_wait 90
         rc=$?
-        t=$(($(now_ms) - t))
+        t="$took_ms"
+        out="$up_out"
         cold+=("$t")
-        say "cold start $i: $(secs "$t") s (budget 45 s), up --wait exit $rc"
-        if [ "$rc" -ne 0 ]; then bad "#74-AC3" "docker compose up -d --wait failed on cold start $i" "$(grep -iE 'dependency|unhealthy|failed|error' <<<"$out" | head -5)"; fi
+        say "cold start $i: $(secs "$t") s until up -d returned and everything is healthy (budget 45 s), exit $rc"
+        if [ "$rc" -ne 0 ]; then bad "#74-AC3" "cold start $i: the stack did not come up healthy" "$(grep -iE 'dependency|unhealthy|failed|error' <<<"$out" | head -5)
+$still_not"; fi
         [ "$t" -le 45000 ] || note "cold start $i took $(secs "$t") s, over the 45 s budget (recorded, not gated)"
         run_durations+="$(check_durations)"$'\n'
     done
@@ -292,11 +307,11 @@ live_checks() {
 
     # warm start: existing volumes, same credentials (#74-AC1.9)
     dc down --timeout 2 >/dev/null 2>&1
-    t="$(now_ms)"
-    out="$(dc up -d --wait 2>&1)"
+    up_wait 90
     rc=$?
-    t=$(($(now_ms) - t))
-    say "warm start: $(secs "$t") s (budget 25 s), up --wait exit $rc"
+    t="$took_ms"
+    out="$up_out"
+    say "warm start: $(secs "$t") s until up -d returned and everything is healthy (budget 25 s), exit $rc"
     [ "$rc" -eq 0 ] && ok || bad "#74-AC1.9" "the stack did not start from existing volumes" "$(grep -iE 'dependency|unhealthy|failed|error' <<<"$out" | head -5)"
     [ "$t" -le 25000 ] || note "warm start took $(secs "$t") s, over the 25 s budget (recorded, not gated)"
     login_note
@@ -307,16 +322,17 @@ live_checks() {
     ids_after="$(dc ps -aq | sort)"
     if [ "$ids_before" = "$ids_after" ] && ! grep -qiE 'recreat' <<<"$out"; then ok; else bad "#74-AC2.7" "a second docker compose up -d recreated a container" "$(grep -iE 'recreat' <<<"$out")"; fi
 
-    # #74-AC1: kill Postgres; the restart policy brings it back, and everything is healthy within 30 s of that
+    # #74-AC1: crash Postgres; the restart policy brings it back, and everything is healthy within 30 s of that
     first_fault="$(now_ms)"
+    # (a crash, not `docker kill`: Docker 29 treats `docker kill` like `docker stop`, so no restart policy applies to it)
     before="$(restarts_of postgres)"
-    docker kill "$(cid postgres)" >/dev/null 2>&1
+    crash_postgres
     sleep 1
-    wait_health postgres healthy 90 || bad "#74-AC1" "Postgres did not come back after docker kill by itself (restarts $(restarts_of postgres), exit $(docker inspect -f '{{.State.ExitCode}}' "$(cid postgres)"))"
-    [ "$(restarts_of postgres)" -gt "$before" ] && ok || bad "#74-AC1" "Postgres was killed but not restarted by the policy"
+    wait_health postgres healthy 90 || bad "#74-AC1" "Postgres did not come back after crashing by itself (restarts $(restarts_of postgres), exit $(docker inspect -f '{{.State.ExitCode}}' "$(cid postgres)"))"
+    [ "$(restarts_of postgres)" -gt "$before" ] && ok || bad "#74-AC1" "Postgres crashed but was not restarted by the policy"
     if wait_all_healthy 60; then
         [ "$took_ms" -le 30000 ] && ok || bad "#74-AC1.4" "everything healthy $(secs "$took_ms") s after Postgres (limit 30 s)" "$still_not"
-        say "recovery after docker kill: all healthy $(secs "$took_ms") s after Postgres was healthy"
+        say "recovery after a Postgres crash: all healthy $(secs "$took_ms") s after Postgres was healthy"
     else bad "#74-AC1" "after Postgres was killed and restarted, not everything became healthy within 60 s" "$still_not"; fi
 
     # #74-AC1, #74-AC3.6: Postgres down for 20 s (docker stop keeps it down), then a longer outage that turns the backends unhealthy
@@ -429,7 +445,8 @@ live_checks() {
         n="$(docker ps -aq --filter "label=com.docker.compose.project=$nproject" --filter "label=com.docker.compose.service=$s" --filter status=running | wc -l)"
         [ "$n" = 0 ] && ok || bad "#74-AC2.9" "$s started although env-check failed"
     done
-    docker compose -p "$nproject" --env-file "$work/env-missing" -f "$compose" -f "$fixture/override.yml" logs env-check 2>&1 | grep -q POSTGRES_PASSWORD && ok || bad "#74-AC2.9" "env-check's log names the missing key"
+    out="$(docker compose -p "$nproject" --env-file "$work/env-missing" -f "$compose" -f "$fixture/override.yml" logs env-check 2>&1)"
+    grep -q 'env-check: POSTGRES_PASSWORD' <<<"$out" && ok || bad "#74-AC2.9" "env-check's log names the missing key" "$out"
     docker compose -p "$nproject" --env-file "$work/env-missing" -f "$compose" -f "$fixture/override.yml" down -v --remove-orphans --timeout 2 >/dev/null 2>&1
 }
 
