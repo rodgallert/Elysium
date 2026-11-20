@@ -196,7 +196,9 @@ route_cases() {
         printf '%s\t%s\t\n' "nlmid$name" "${r}foo%0Abar"  # an encoded newline: PCRE's . skips it, so a rewrite without (?s) misses
         printf '%s\t%s\t\n' "nlend$name" "${r}foo%0A"
         printf '%s\t%s\t\n' "crlf$name" "${r}foo%0D%0Abar" # an encoded CRLF stays encoded all the way to the backend
-        # raw characters nginx re-encodes in the request line it sends (\ " < > ` | ^), as it did before the change
+        # raw characters (\ " < > ` | ^): the old config forwarded them as sent; with a variable proxy_pass nginx sends them
+        # percent-encoded (a%5Cb...), the same bytes for the backend after decoding. The capture holds the encoded form on
+        # purpose: this one difference from the old config is accepted and recorded in Prince/Docs/decisions.md.
         printf '%s\t%s\t\n' "rawchars$name" "${r}"'a\b"c<d>e`f|g^h'
         printf '%s\t%s\t\n' "redir$name" "${r}redir"
         printf '%s\t%s\t%s\n' "headers$name" "${r}h" "-H|X-Forwarded-For: 203.0.113.9|-H|X-Forwarded-Proto: spoofed"

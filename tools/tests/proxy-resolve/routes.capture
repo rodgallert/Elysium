@@ -7,7 +7,7 @@ encslash_vue_checkout_	200		backend=checkout-web-vue request=GET /a/b HTTP/1.0 h
 nlmid_vue_checkout_	200		backend=checkout-web-vue request=GET /foo%0Abar HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 nlend_vue_checkout_	200		backend=checkout-web-vue request=GET /foo%0A HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 crlf_vue_checkout_	200		backend=checkout-web-vue request=GET /foo%0D%0Abar HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
-rawchars_vue_checkout_	200		backend=checkout-web-vue request=GET /a\b"c<d>e`f|g^h HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
+rawchars_vue_checkout_	200		backend=checkout-web-vue request=GET /a%5Cb%22c%3Cd%3Ee%60f%7Cg%5Eh HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 redir_vue_checkout_	302	http://127.0.0.1:PORT/redirected	-
 headers_vue_checkout_	200		backend=checkout-web-vue request=GET /h HTTP/1.0 host=127.0.0.1:PORT xff=203.0.113.9, IP proto=http 
 long8k_vue_checkout_	200		-
@@ -21,7 +21,7 @@ encslash_vue_	200		backend=core-web-vue request=GET /a/b HTTP/1.0 host=127.0.0.1
 nlmid_vue_	200		backend=core-web-vue request=GET /foo%0Abar HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 nlend_vue_	200		backend=core-web-vue request=GET /foo%0A HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 crlf_vue_	200		backend=core-web-vue request=GET /foo%0D%0Abar HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
-rawchars_vue_	200		backend=core-web-vue request=GET /a\b"c<d>e`f|g^h HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
+rawchars_vue_	200		backend=core-web-vue request=GET /a%5Cb%22c%3Cd%3Ee%60f%7Cg%5Eh HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 redir_vue_	302	http://127.0.0.1:PORT/redirected	-
 headers_vue_	200		backend=core-web-vue request=GET /h HTTP/1.0 host=127.0.0.1:PORT xff=203.0.113.9, IP proto=http 
 long8k_vue_	200		-
@@ -35,7 +35,7 @@ encslash_react_checkout_	200		backend=checkout-web-react request=GET /a/b HTTP/1
 nlmid_react_checkout_	200		backend=checkout-web-react request=GET /foo%0Abar HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 nlend_react_checkout_	200		backend=checkout-web-react request=GET /foo%0A HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 crlf_react_checkout_	200		backend=checkout-web-react request=GET /foo%0D%0Abar HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
-rawchars_react_checkout_	200		backend=checkout-web-react request=GET /a\b"c<d>e`f|g^h HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
+rawchars_react_checkout_	200		backend=checkout-web-react request=GET /a%5Cb%22c%3Cd%3Ee%60f%7Cg%5Eh HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 redir_react_checkout_	302	http://127.0.0.1:PORT/redirected	-
 headers_react_checkout_	200		backend=checkout-web-react request=GET /h HTTP/1.0 host=127.0.0.1:PORT xff=203.0.113.9, IP proto=http 
 long8k_react_checkout_	200		-
@@ -49,7 +49,7 @@ encslash_react_	200		backend=core-web-react request=GET /a/b HTTP/1.0 host=127.0
 nlmid_react_	200		backend=core-web-react request=GET /foo%0Abar HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 nlend_react_	200		backend=core-web-react request=GET /foo%0A HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 crlf_react_	200		backend=core-web-react request=GET /foo%0D%0Abar HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
-rawchars_react_	200		backend=core-web-react request=GET /a\b"c<d>e`f|g^h HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
+rawchars_react_	200		backend=core-web-react request=GET /a%5Cb%22c%3Cd%3Ee%60f%7Cg%5Eh HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 redir_react_	302	http://127.0.0.1:PORT/redirected	-
 headers_react_	200		backend=core-web-react request=GET /h HTTP/1.0 host=127.0.0.1:PORT xff=203.0.113.9, IP proto=http 
 long8k_react_	200		-
@@ -63,7 +63,7 @@ encslash_api_checkout_	200		backend=checkout-api request=GET /a/b HTTP/1.0 host=
 nlmid_api_checkout_	200		backend=checkout-api request=GET /foo%0Abar HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 nlend_api_checkout_	200		backend=checkout-api request=GET /foo%0A HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 crlf_api_checkout_	200		backend=checkout-api request=GET /foo%0D%0Abar HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
-rawchars_api_checkout_	200		backend=checkout-api request=GET /a\b"c<d>e`f|g^h HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
+rawchars_api_checkout_	200		backend=checkout-api request=GET /a%5Cb%22c%3Cd%3Ee%60f%7Cg%5Eh HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 redir_api_checkout_	302	http://127.0.0.1:PORT/redirected	-
 headers_api_checkout_	200		backend=checkout-api request=GET /h HTTP/1.0 host=127.0.0.1:PORT xff=203.0.113.9, IP proto=http 
 long8k_api_checkout_	200		-
@@ -77,7 +77,7 @@ encslash_api_	200		backend=core-api request=GET /a/b HTTP/1.0 host=127.0.0.1:POR
 nlmid_api_	200		backend=core-api request=GET /foo%0Abar HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 nlend_api_	200		backend=core-api request=GET /foo%0A HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 crlf_api_	200		backend=core-api request=GET /foo%0D%0Abar HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
-rawchars_api_	200		backend=core-api request=GET /a\b"c<d>e`f|g^h HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
+rawchars_api_	200		backend=core-api request=GET /a%5Cb%22c%3Cd%3Ee%60f%7Cg%5Eh HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 redir_api_	302	http://127.0.0.1:PORT/redirected	-
 headers_api_	200		backend=core-api request=GET /h HTTP/1.0 host=127.0.0.1:PORT xff=203.0.113.9, IP proto=http 
 long8k_api_	200		-
@@ -91,7 +91,7 @@ encslash_jobs_	200		backend=jobs-api request=GET /hangfire/a/b HTTP/1.0 host=127
 nlmid_jobs_	200		backend=jobs-api request=GET /hangfire/foo%0Abar HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 nlend_jobs_	200		backend=jobs-api request=GET /hangfire/foo%0A HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 crlf_jobs_	200		backend=jobs-api request=GET /hangfire/foo%0D%0Abar HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
-rawchars_jobs_	200		backend=jobs-api request=GET /hangfire/a\b"c<d>e`f|g^h HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
+rawchars_jobs_	200		backend=jobs-api request=GET /hangfire/a%5Cb%22c%3Cd%3Ee%60f%7Cg%5Eh HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 redir_jobs_	200		backend=jobs-api request=GET /hangfire/redir HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 headers_jobs_	200		backend=jobs-api request=GET /hangfire/h HTTP/1.0 host=127.0.0.1:PORT xff=203.0.113.9, IP proto=http 
 long8k_jobs_	200		-
@@ -105,7 +105,7 @@ encslash_admin_	200		backend=jobs-api request=GET /admin/a/b HTTP/1.0 host=127.0
 nlmid_admin_	200		backend=jobs-api request=GET /admin/foo%0Abar HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 nlend_admin_	200		backend=jobs-api request=GET /admin/foo%0A HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 crlf_admin_	200		backend=jobs-api request=GET /admin/foo%0D%0Abar HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
-rawchars_admin_	200		backend=jobs-api request=GET /admin/a\b"c<d>e`f|g^h HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
+rawchars_admin_	200		backend=jobs-api request=GET /admin/a%5Cb%22c%3Cd%3Ee%60f%7Cg%5Eh HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 redir_admin_	200		backend=jobs-api request=GET /admin/redir HTTP/1.0 host=127.0.0.1:PORT xff=IP proto=http 
 headers_admin_	200		backend=jobs-api request=GET /admin/h HTTP/1.0 host=127.0.0.1:PORT xff=203.0.113.9, IP proto=http 
 long8k_admin_	200		-
