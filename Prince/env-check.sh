@@ -40,6 +40,15 @@ done
 min_length FILE_STORAGE_ROOT_USER 3
 min_length FILE_STORAGE_ROOT_PASSWORD 8
 
+# The bucket creation hands the Silo credentials to mcli in a URL (MC_HOST_local, user:password@host): a colon splits user
+# from password, so every call fails with "security token invalid" (measured on the pinned image, also when written as
+# %3A). @ / # % ? work as they are.
+for name in FILE_STORAGE_ROOT_USER FILE_STORAGE_ROOT_PASSWORD; do
+    case "$(value "$name")" in
+    *":"*) bad "$name" "must not contain a colon (the bucket creation passes it in a URL)" ;;
+    esac
+done
+
 # Postgres values go into Npgsql connection strings (Key=Value;Key=Value), where a semicolon ends the value
 for name in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB; do
     case "$(value "$name")" in
