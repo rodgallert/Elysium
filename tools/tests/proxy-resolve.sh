@@ -8,7 +8,7 @@
 #        tools/tests/proxy-resolve.sh --record   rewrite tools/tests/proxy-resolve/routes.capture from the current
 #                                                config (done once against the old config; it is the "before" of AC3;
 #                                                PROXY_DIR=<dir with the old nginx.conf and Dockerfile> records from there)
-# PROXY_TEST_ONLY=drift runs only the deploy drift check (#73-AC4.3), PROXY_TEST_ONLY=net only AC5 and AC6.
+# PROXY_TEST_ONLY=drift runs only the deploy drift check (#73-AC4.3), PROXY_TEST_ONLY=net only AC5 and AC6, PROXY_TEST_ONLY=routes only AC3.
 # Needs Docker with Compose. About 5 minutes (4m13s to 6m12s measured, the high end with cold frontend builds; PROXY_TEST_ONLY=drift or net alone 1 to 2 minutes). PROXY_TEST_PROJECT overrides the project name.
 set -uo pipefail
 
@@ -196,9 +196,8 @@ route_cases() {
         printf '%s\t%s\t\n' "nlmid$name" "${r}foo%0Abar"  # an encoded newline: PCRE's . skips it, so a rewrite without (?s) misses
         printf '%s\t%s\t\n' "nlend$name" "${r}foo%0A"
         printf '%s\t%s\t\n' "crlf$name" "${r}foo%0D%0Abar" # an encoded CRLF stays encoded all the way to the backend
-        # raw characters (\ " < > ` | ^): the old config forwarded them as sent; with a variable proxy_pass nginx sends them
-        # percent-encoded (a%5Cb...), the same bytes for the backend after decoding. The capture holds the encoded form on
-        # purpose: this one difference from the old config is accepted and recorded in Prince/Docs/decisions.md.
+        # raw characters (\ " < > ` | ^) reach the upstream percent-encoded: specified behaviour of #73-AC3 (the old config
+        # forwarded them as sent), so the capture holds the encoded form
         printf '%s\t%s\t\n' "rawchars$name" "${r}"'a\b"c<d>e`f|g^h'
         printf '%s\t%s\t\n' "redir$name" "${r}redir"
         printf '%s\t%s\t%s\n' "headers$name" "${r}h" "-H|X-Forwarded-For: 203.0.113.9|-H|X-Forwarded-Proto: spoofed"
@@ -465,6 +464,34 @@ timeout_section() {
     wait_healthy "$svc"
     recovers "#73-AC6.3" "the backend recovers after the refused-address case" "$svc"
 }
+routes_section() {
+    # === AC3: routing before and after ===================================================================================
+    echo "== #73-AC3: routing equals the recorded capture"
+    # #73-AC3.9: the "before" is routes.capture, a fixture recorded on the old config; the old image is not needed
+    start_all || bad "#73-AC3" "the stack did not start for the routing comparison"
+    refresh_port
+    while IFS=$'\t' read -r name path extra; do observe "$name" "$path" "$extra"; done < <(route_cases) >"$work/now"
+    while IFS=$'\t' read -r name path extra; do observe "$name" "$path" "$extra"; done < <(route_cases) >"$work/again"
+    if diff "$capture_file" "$work/now" >"$work/diff"; then ok; else bad "#73-AC3" "routing differs from the recorded capture" "$(head -20 "$work/diff")"; fi
+    check "#73-AC3.7" "the same requests twice return the same responses" diff -q "$work/now" "$work/again" >/dev/null
+
+    # #73-AC3.1 (spec change of 2026-11-20): a raw character RFC 3986 doesn't allow in a path reaches the upstream
+    # percent-encoded, decoding to the path the client sent; an already encoded %5C is not encoded again
+    declare -A enc=(
+        ['a\b']='a%5Cb' ['a"b']='a%22b' ['a<b>']='a%3Cb%3E' ['a`b']='a%60b' ['a|b']='a%7Cb' ['a^b']='a%5Eb' ['a%5Cb']='a%5Cb'
+    )
+    for raw in 'a\b' 'a"b' 'a<b>' 'a`b' 'a|b' 'a^b' 'a%5Cb'; do
+        want="${enc[$raw]}"
+        got="$(get "/api/$raw" | grep -o 'request=GET [^ ]*')"
+        [ "$got" = "request=GET /$want" ] && ok || bad "#73-AC3.1" "raw path /api/$raw: the upstream must receive /$want (got '${got#request=GET }')"
+    done
+}
+if [ "${PROXY_TEST_ONLY:-}" = routes ]; then # only the AC3 routing section
+    routes_section
+    echo "$pass passed, $failed failed"
+    [ "$failed" -eq 0 ]
+    exit
+fi
 if [ "${PROXY_TEST_ONLY:-}" = net ]; then # only the AC5 and AC6 sections
     start_all || bad "#73" "the stack did not start"
     refresh_port
@@ -615,16 +642,7 @@ fi
 dc down -v --remove-orphans --timeout 2 >/dev/null 2>&1
 compose_files=(-f "$fixture/compose.yml")
 
-# === AC3: routing before and after ===================================================================================
-echo "== #73-AC3: routing equals the recorded capture"
-# #73-AC3.9: the "before" is routes.capture, a fixture recorded on the old config; the old image is not needed
-start_all || bad "#73-AC3" "the stack did not start for the routing comparison"
-refresh_port
-while IFS=$'\t' read -r name path extra; do observe "$name" "$path" "$extra"; done < <(route_cases) >"$work/now"
-while IFS=$'\t' read -r name path extra; do observe "$name" "$path" "$extra"; done < <(route_cases) >"$work/again"
-if diff "$capture_file" "$work/now" >"$work/diff"; then ok; else bad "#73-AC3" "routing differs from the recorded capture" "$(head -20 "$work/diff")"; fi
-check "#73-AC3.7" "the same requests twice return the same responses" diff -q "$work/now" "$work/again" >/dev/null
-
+routes_section
 dns_section
 timeout_section
 
