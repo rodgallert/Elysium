@@ -1,0 +1,5 @@
+# Silo that never serves: its check fails the whole run (#74-AC2.3). Used on top of override.yml.
+services:
+  file-storage:
+    entrypoint: ["sleep", "infinity"]
+    command: []

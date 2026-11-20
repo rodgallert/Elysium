@@ -1,0 +1,37 @@
+# Throwaway services for the health check boundaries (#74-AC3.2): the stub image only sleeps.
+# check29 and check31: a check taking 2.9 s and 3.1 s with the backends' timeout (no start period, so the result shows at once).
+# boot20, boot35, boot70: a service that is ready after that many seconds, with the backends' real timings.
+x-image: &image ${STUB_IMAGE}
+services:
+  check29:
+    image: *image
+    command: ["sleep", "infinity"]
+    healthcheck: &quick
+      test: ["CMD-SHELL", "sleep 2.9"]
+      interval: 2s
+      timeout: ${HC_TIMEOUT}
+      retries: 1
+  check31:
+    image: *image
+    command: ["sleep", "infinity"]
+    healthcheck:
+      <<: *quick
+      test: ["CMD-SHELL", "sleep 3.1"]
+  boot20:
+    image: *image
+    command: ["sh", "-c", "sleep 20; touch /tmp/ready; sleep 3600"]
+    healthcheck: &real
+      test: ["CMD-SHELL", "test -f /tmp/ready"]
+      interval: ${HC_INTERVAL}
+      timeout: ${HC_TIMEOUT}
+      retries: ${HC_RETRIES}
+      start_period: ${HC_START_PERIOD}
+      start_interval: ${HC_START_INTERVAL}
+  boot35:
+    image: *image
+    command: ["sh", "-c", "sleep 35; touch /tmp/ready; sleep 3600"]
+    healthcheck: *real
+  boot70:
+    image: *image
+    command: ["sh", "-c", "sleep 70; touch /tmp/ready; sleep 3600"]
+    healthcheck: *real
