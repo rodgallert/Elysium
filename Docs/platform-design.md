@@ -545,6 +545,10 @@ credentials for databases, Redis and the broker; encrypted personal data; append
   been breached.
 - **TLS between every service in production** (databases, Redis and the broker included), with
   services able to present client certificates later.
+- **The edge normalises request paths for every service:** raw characters RFC 3986 doesn't allow in a
+  path (`\ " < > ` | ^`) are percent-encoded before any backend sees them, and already-encoded ones
+  are not encoded again, so no service depends on its own framework's URL parsing (PO decision,
+  recorded on #62 and in #73-AC3).
 - **Revocation as a language-neutral contract** (Masquerade's contract file), so any service can
   check it itself later.
 - **Service identities on internal calls** (short-lived client-credential tokens from Masquerade,
