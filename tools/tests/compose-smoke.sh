@@ -255,7 +255,7 @@ check_durations() { # health check durations in ms of every service, from the li
     local s id
     for s in "${longrunning[@]}"; do
         id="$(cid "$s")"
-        docker inspect -f '{{range .State.Health.Log}}{{.Start}} {{.End}}{{"\n"}}{{end}}' "$id" 2>/dev/null | while read -r a b; do
+        docker inspect "$id" 2>/dev/null | jq -r '.[0].State.Health.Log[]? | [.Start, .End] | @tsv' | while IFS=$'\t' read -r a b; do
             [ -n "$a" ] && echo $(($(date -d "$b" +%s%3N) - $(date -d "$a" +%s%3N)))
         done
     done
@@ -352,15 +352,16 @@ live_checks() {
     done
     wait_all_healthy 60 || true
 
-    # #74-AC2: Silo stopped by hand: the routes that don't need storage answer 200
+    # #74-AC2: Silo stopped by hand: the routes that don't need storage answer 200 (the API routes are asked for /health: the
+    # APIs have no root route, so /api/checkout/ itself answers 404 with or without Silo)
     docker stop "$(cid file-storage)" >/dev/null 2>&1
     sleep 3
-    for r in /vue/ /react/ /api/checkout/; do
+    for r in /vue/ /react/ /api/checkout/health; do
         [ "$(code "$r")" = 200 ] && ok || bad "#74-AC2" "$r answers 200 with Silo stopped (got $(code "$r"))"
     done
     # #74-AC2.3: record which routes fail without Silo
     local failing=""
-    for r in /vue/checkout/ /vue/ /react/checkout/ /react/ /api/checkout/ /api/ /jobs/ /admin/; do
+    for r in /vue/checkout/ /vue/ /react/checkout/ /react/ /api/checkout/health /api/health /jobs/ /admin/; do
         [ "$(code "$r")" = 200 ] || failing+=" $r($(code "$r"))"
     done
     note "with Silo stopped, these routes do not answer 200:${failing:- none}"
@@ -406,7 +407,7 @@ live_checks() {
         sleep 1
     done
     [ -z "$bad_list" ] && ok || bad "#74-AC2" "with Silo unhealthy, up -d did not start everything else" "$bad_list"
-    for r in /vue/ /react/ /api/checkout/; do
+    for r in /vue/ /react/ /api/checkout/health; do
         [ "$(code "$r")" = 200 ] && ok || bad "#74-AC2.3" "$r answers 200 with Silo down for the whole run (got $(code "$r"))"
     done
 

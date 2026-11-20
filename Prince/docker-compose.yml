@@ -40,10 +40,15 @@ services:
       env-check:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      # "healthy" means the server accepts connections and the application database answers select 1; it does not
+      # mean the services have migrated (that is their own /health). The password is never part of the command:
+      # local socket connections inside the container need none.
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\" && psql -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\" -tAc 'select 1' >/dev/null"]
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 10s
+    restart: unless-stopped
 
   core-api:
     build:
@@ -55,13 +60,19 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      file-storage-init:
-        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      # Passes when /health answers and postgres:5432 accepts a TCP connection (telnet:// is curl's bare connect, no
+      # byte is sent), so a backend turns unhealthy during a Postgres outage. It cannot see a missing application
+      # database or a migration still running: that is the /ready endpoint of the Prince design sprint. Both calls
+      # stay inside the 3 s timeout; the failures of the first 30 s are not counted, and the check runs every 2 s
+      # until the first success.
+      test: ["CMD-SHELL", "curl -fs -m 2 -o /dev/null http://localhost:8080/health && curl -s -m 2 telnet://postgres:5432 </dev/null"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
+    restart: unless-stopped
 
   checkout-api:
     build:
@@ -74,10 +85,18 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      # Passes when /health answers and postgres:5432 accepts a TCP connection (telnet:// is curl's bare connect, no
+      # byte is sent), so a backend turns unhealthy during a Postgres outage. It cannot see a missing application
+      # database or a migration still running: that is the /ready endpoint of the Prince design sprint. Both calls
+      # stay inside the 3 s timeout; the failures of the first 30 s are not counted, and the check runs every 2 s
+      # until the first success.
+      test: ["CMD-SHELL", "curl -fs -m 2 -o /dev/null http://localhost:8080/health && curl -s -m 2 telnet://postgres:5432 </dev/null"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
+    restart: unless-stopped
 
   jobs-api:
     build:
@@ -94,10 +113,18 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      # Passes when /health answers and postgres:5432 accepts a TCP connection (telnet:// is curl's bare connect, no
+      # byte is sent), so a backend turns unhealthy during a Postgres outage. It cannot see a missing application
+      # database or a migration still running: that is the /ready endpoint of the Prince design sprint. Both calls
+      # stay inside the 3 s timeout; the failures of the first 30 s are not counted, and the check runs every 2 s
+      # until the first success.
+      test: ["CMD-SHELL", "curl -fs -m 2 -o /dev/null http://localhost:8080/health && curl -s -m 2 telnet://postgres:5432 </dev/null"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
+    restart: unless-stopped
 
   file-storage:
     # Silo: a maintained MinIO fork (MinIO's own images are no longer published); same S3 API and MINIO_* settings
@@ -120,8 +147,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   file-storage-init:
+    # One-shot: it exits 0 once the bucket exists and is not started again by a restart policy
+    restart: "no"
     # Same image as the server: its bundled client (mcli) creates the bucket
     image: pgsty/silo:RELEASE.2026-11-12T00-00-00Z
     # The values come in through the environment and are quoted, so a space or a shell character in one can't
@@ -148,8 +178,9 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
 
   checkout-web-vue:
     build:
@@ -157,8 +188,9 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
 
   core-web-react:
     build:
@@ -166,8 +198,9 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
 
   checkout-web-react:
     build:
@@ -175,8 +208,9 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
 
   reverse-proxy:
     build:
@@ -187,21 +221,14 @@ services:
       - 127.0.0.1
     ports:
       - "127.0.0.1:${REVERSE_PROXY_PORT}:80"
-    depends_on:
-      core-api:
-        condition: service_healthy
-      checkout-api:
-        condition: service_healthy
-      jobs-api:
-        condition: service_healthy
-      core-web-vue:
-        condition: service_healthy
-      checkout-web-vue:
-        condition: service_healthy
-      core-web-react:
-        condition: service_healthy
-      checkout-web-react:
-        condition: service_healthy
+    # The proxy starts without its backends (it looks them up when a request comes), so its check only asks whether nginx
+    # answers at all: any HTTP status counts, a 404 included.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -S --spider -T 2 http://127.0.0.1/ 2>&1 | grep -q 'HTTP/'"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
 
 volumes:
   prince-pgdata:

@@ -280,6 +280,8 @@ jobs:
         run: tools/tests/env-check.sh
       - name: Ticket script tests
         run: tools/tests/ticket-tools.sh
+      - name: Compose image-name check tests
+        run: tools/tests/check-compose-images.sh
       - name: Every job did what this change calls for
         env:
           NEEDS: ${{ toJSON(needs) }}
