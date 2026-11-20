@@ -429,7 +429,9 @@ $still_not"; fi
         [ "$(code "$r")" = 200 ] && ok || bad "#74-AC2.3" "$r answers 200 with Silo down for the whole run (got $(code "$r"))"
     done
 
-    # #74-AC2.9: a missing key still fails before the services that use its values start
+    # #74-AC2.9: a missing key still fails before the services that use its values start (the stack above is down first:
+    # both would publish the same proxy port)
+    dc down -v --remove-orphans --timeout 2 >/dev/null 2>&1
     grep -v '^POSTGRES_PASSWORD=' "$env_file" >"$work/env-missing"
     local nproject="${project}-noenv"
     out="$(docker compose -p "$nproject" --env-file "$work/env-missing" -f "$compose" -f "$fixture/override.yml" up -d 2>&1)"
@@ -439,7 +441,11 @@ $still_not"; fi
         n="$(docker ps -aq --filter "label=com.docker.compose.project=$nproject" --filter "label=com.docker.compose.service=$s" --filter status=running | wc -l)"
         [ "$n" = 0 ] && ok || bad "#74-AC2.9" "$s started although env-check failed"
     done
-    out="$(docker compose -p "$nproject" --env-file "$work/env-missing" -f "$compose" -f "$fixture/override.yml" logs env-check 2>&1)"
+    for ((i = 0; i < 15; i++)); do
+        out="$(docker compose -p "$nproject" --env-file "$work/env-missing" -f "$compose" -f "$fixture/override.yml" logs env-check 2>&1)"
+        grep -q 'env-check: POSTGRES_PASSWORD' <<<"$out" && break
+        sleep 1
+    done
     grep -q 'env-check: POSTGRES_PASSWORD' <<<"$out" && ok || bad "#74-AC2.9" "env-check's log names the missing key" "$out"
     docker compose -p "$nproject" --env-file "$work/env-missing" -f "$compose" -f "$fixture/override.yml" down -v --remove-orphans --timeout 2 >/dev/null 2>&1
 }
