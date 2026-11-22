@@ -265,7 +265,7 @@ fixed; the second category is kept for names added later.
 | Hostnames in section 2 | fixed now | #27 adopts them for Masquerade and Keeper |
 | Label `elysium.needs` | fixed now | format in section 8 |
 | Image names `elysium-<service>-<component>` | fixed now | today's names (the table in `Docs/workflow.md`, "Development images") stay byte for byte when #27 adds the root compose file. `tools/list-images.sh`, `tools/release-parts.sh` and `tools/check-prod-pins.sh` are extended to produce them from a root file (service = the first folder of each build context; an `include:`d service counts once; today `list-images.sh` refuses a root file). A rename is out of scope for #27: it would be its own breaking change and would redo the make-public-and-link step for each package |
-| Prince's Compose service names: `core-api`, `checkout-api`, `jobs-api`, `core-web-vue`, `checkout-web-vue`, `core-web-react`, `checkout-web-react`, `postgres`, `file-storage`, `file-storage-init`, `env-check`, `reverse-proxy` | fixed now | the image name's `<component>` is the Compose service name, so a rename breaks the pins in `docker-compose.prod.yml`. To rename one, first decouple the image name from the service name and keep the image names |
+| Prince's Compose service names: `core-api`, `checkout-api`, `jobs-api`, `core-web-vue`, `checkout-web-vue`, `core-web-react`, `checkout-web-react`, `postgres`, `file-storage`, `env-check`, `reverse-proxy` | fixed now | the image name's `<component>` is the Compose service name, so a rename breaks the pins in `docker-compose.prod.yml`. To rename one, first decouple the image name from the service name and keep the image names |
 
 ## 10. Test debt moved out
 

@@ -1,0 +1,10 @@
+# Smoke-test overrides for Prince/docker-compose.yml: no fixed host ports (a running stack of the PO keeps 5432 and 9001)
+# and the proxy on the loopback port the test picks.
+services:
+  postgres:
+    ports: !override []
+  file-storage:
+    ports: !override []
+  reverse-proxy:
+    ports: !override
+      - "127.0.0.1:${REVERSE_PROXY_PORT}:80"

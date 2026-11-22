@@ -47,7 +47,11 @@ fails() {
     local name="$1" variable="$2"
     shift 2
     run "$@"
-    if [ "$rc" -eq 1 ] && [ "$(grep -c '^env-check: ' <<<"$out")" -eq 1 ] && grep -q "^env-check: $variable " <<<"$out"; then
+    local value="" item leaked=0
+    for item in "$@"; do case "$item" in "$variable"=*) value="${item#*=}" ;; esac; done
+    # #74-AC6.10: the submitted value is never in the output (checked for values of 4 characters or more)
+    if [ "${#value}" -ge 4 ] && grep -qF -- "$value" <<<"$out"; then leaked=1; fi
+    if [ "$leaked" -eq 0 ] && [ "$rc" -eq 1 ] && [ "$(grep -c '^env-check: ' <<<"$out")" -eq 1 ] && grep -q "^env-check: $variable " <<<"$out"; then
         pass=$((pass + 1))
     else
         failed=$((failed + 1))
@@ -74,6 +78,49 @@ passes "the example values pass"
 
 # Silo's rules
 passes "Silo password of exactly 8 characters" FILE_STORAGE_ROOT_PASSWORD=12345678
+# #74-AC6: the bucket creation puts the Silo credentials in a URL (MC_HOST_local): a colon splits user from password and
+# fails every login ("security token invalid", measured on the pinned image); @ / # % ? work as written
+# colon_rule <name> <variable> <override>...: exit 1 and a line naming the variable with the colon rule (other rules may add lines)
+colon_rule() {
+    local name="$1" variable="$2"
+    shift 2
+    run "$@"
+    if [ "$rc" -eq 1 ] && grep -q "^env-check: $variable must not contain a colon" <<<"$out"; then pass=$((pass + 1)); else
+        failed=$((failed + 1))
+        echo "FAIL: $name (expected exit 1 and the colon rule for $variable, got exit $rc)"
+        printf '%s\n' "    ${out//$'\n'/$'\n    '}"
+    fi
+}
+# no_colon_rule <name> <override>...: the colon rule does not fire (another rule may)
+no_colon_rule() {
+    local name="$1"
+    shift
+    run "$@"
+    if ! grep -q 'must not contain a colon' <<<"$out"; then pass=$((pass + 1)); else
+        failed=$((failed + 1))
+        echo "FAIL: $name (the colon rule fired)"
+        printf '%s\n' "    ${out//$'\n'/$'\n    '}"
+    fi
+}
+fails "#74-AC6.1 colon in the middle of the Silo password" FILE_STORAGE_ROOT_PASSWORD 'FILE_STORAGE_ROOT_PASSWORD=pa:ss1234'
+fails "#74-AC6.1 colon first in the Silo password" FILE_STORAGE_ROOT_PASSWORD 'FILE_STORAGE_ROOT_PASSWORD=:ss123456'
+fails "#74-AC6.1 colon last in the Silo password" FILE_STORAGE_ROOT_PASSWORD 'FILE_STORAGE_ROOT_PASSWORD=pass12345:'
+colon_rule "#74-AC6.1 a colon as the only character of the Silo password" FILE_STORAGE_ROOT_PASSWORD 'FILE_STORAGE_ROOT_PASSWORD=:'
+colon_rule "#74-AC6.1 a colon as the only character of the Silo user" FILE_STORAGE_ROOT_USER 'FILE_STORAGE_ROOT_USER=:'
+for ch in '@' '/' '#' '%' '?'; do
+    passes "#74-AC6.1 $ch in the Silo password passes" "FILE_STORAGE_ROOT_PASSWORD=ab${ch}cd1234"
+    passes "#74-AC6.1 $ch in the Silo user passes" "FILE_STORAGE_ROOT_USER=ab${ch}cd"
+done
+passes "#74-AC6.1 %3A without a colon passes this rule" 'FILE_STORAGE_ROOT_PASSWORD=ab%3Acd1234'
+fails "#74-AC6.2 colon in the Silo user, same rule as the password" FILE_STORAGE_ROOT_USER 'FILE_STORAGE_ROOT_USER=prince:admin'
+no_colon_rule "#74-AC6.2 a one-character Silo password is not a colon problem" 'FILE_STORAGE_ROOT_PASSWORD=a'
+no_colon_rule "#74-AC6.2 a one-character Silo user is not a colon problem" 'FILE_STORAGE_ROOT_USER=a'
+# #74-AC6.7: two runs print the same; removing the colon makes the next run pass with no other change
+run 'FILE_STORAGE_ROOT_PASSWORD=pa:ss1234'
+first="$out"
+run 'FILE_STORAGE_ROOT_PASSWORD=pa:ss1234'
+if [ "$out" = "$first" ] && [ -n "$first" ]; then pass=$((pass + 1)); else failed=$((failed + 1)); echo "FAIL: #74-AC6.7 two runs on the same values print the same"; fi
+passes "#74-AC6.7 the same values without the colon pass" 'FILE_STORAGE_ROOT_PASSWORD=pass12345'
 fails "Silo password of 7 characters" FILE_STORAGE_ROOT_PASSWORD FILE_STORAGE_ROOT_PASSWORD=1234567
 fails "empty Silo password" FILE_STORAGE_ROOT_PASSWORD FILE_STORAGE_ROOT_PASSWORD=
 fails "missing Silo password" FILE_STORAGE_ROOT_PASSWORD FILE_STORAGE_ROOT_PASSWORD
