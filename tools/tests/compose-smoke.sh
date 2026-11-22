@@ -8,6 +8,7 @@
 # COMPOSE_SMOKE_ONLY=static   only the checks on `docker compose config` (seconds, nothing is started)
 # COMPOSE_SMOKE_ONLY=stub     only the stub services of the health check boundaries (about 90 s)
 # COMPOSE_SMOKE_ONLY=live     only the real stack (without the bucket phase)
+# COMPOSE_SMOKE_ONLY=env      only the .env rules before any service starts (#74-AC2.9, #74-AC6, about 1 minute)
 # COMPOSE_SMOKE_ONLY=bucket   only the file storage's bucket (#74-AC5, about 3 minutes)
 # COMPOSE_SMOKE_OBSERVE=<s>   the RestartCount observation window of #74-AC1 (default 300)
 # COMPOSE_SMOKE_RUNS=<n>      cold starts measured for the budget and the check durations (default 3)
@@ -450,11 +451,16 @@ $still_not"; fi
         [ "$(code "$r")" = 200 ] && ok || bad "#74-AC2.3" "$r answers 200 with Silo down for the whole run (got $(code "$r"))"
     done
 
+    env_checks
+}
+
+# --- the .env rules refuse before any service starts (#74-AC2.9, #74-AC6) --------------------------------------------------
+env_checks() {
+    local out rc n s i nproject="${project}-noenv"
     # #74-AC2.9: a missing key still fails before the services that use its values start (the stack above is down first:
     # both would publish the same proxy port)
     dc down -v --remove-orphans --timeout 2 >/dev/null 2>&1
     grep -v '^POSTGRES_PASSWORD=' "$env_file" >"$work/env-missing"
-    local nproject="${project}-noenv"
     out="$(docker compose -p "$nproject" --env-file "$work/env-missing" -f "$compose" -f "$fixture/override.yml" up -d 2>&1)"
     rc=$?
     [ "$rc" -ne 0 ] && ok || bad "#74-AC2.9" "up -d with POSTGRES_PASSWORD missing was not refused"
@@ -469,6 +475,35 @@ $still_not"; fi
     done
     grep -q 'env-check: POSTGRES_PASSWORD' <<<"$out" && ok || bad "#74-AC2.9" "env-check's log names the missing key" "$out"
     docker compose -p "$nproject" --env-file "$work/env-missing" -f "$compose" -f "$fixture/override.yml" down -v --remove-orphans --timeout 2 >/dev/null 2>&1
+
+    # #74-AC6.6: a colon in the Silo user with a valid password refuses the whole up before any service starts
+    local colon_user="usr:Zx9Secret"
+    sed "s/^FILE_STORAGE_ROOT_USER=.*/FILE_STORAGE_ROOT_USER=$colon_user/" "$env_file" >"$work/env-colon"
+    local ncd=(docker compose -p "$nproject" --env-file "$work/env-colon" -f "$compose" -f "$fixture/override.yml")
+    out="$("${ncd[@]}" up -d 2>&1)"
+    rc=$?
+    [ "$rc" -ne 0 ] && ok || bad "#74-AC6.6" "up -d with a colon in FILE_STORAGE_ROOT_USER was not refused"
+    for s in postgres jobs-api file-storage core-api checkout-api; do
+        n="$(docker ps -aq --filter "label=com.docker.compose.project=$nproject" --filter "label=com.docker.compose.service=$s" --filter status=running | wc -l)"
+        [ "$n" = 0 ] && ok || bad "#74-AC6.6" "$s started although env-check refused a colon in the Silo user"
+    done
+    for ((i = 0; i < 15; i++)); do
+        out="$("${ncd[@]}" logs env-check 2>&1)"
+        grep -q 'env-check: FILE_STORAGE_ROOT_USER must not contain a colon' <<<"$out" && break
+        sleep 1
+    done
+    grep -q 'env-check: FILE_STORAGE_ROOT_USER must not contain a colon' <<<"$out" && ok || bad "#74-AC6.6" "env-check's log names FILE_STORAGE_ROOT_USER and the colon rule" "$out"
+    # #74-AC6.10: the submitted value is in neither env-check's output nor any service log
+    local all_logs
+    all_logs="$out
+$("${ncd[@]}" logs 2>&1)"
+    if grep -qF -- "$colon_user" <<<"$all_logs"; then bad "#74-AC6.10" "the submitted value appears in the logs"; else ok; fi
+    # #74-AC6.7: a second run on the same .env refuses the same way; without the colon the next run passes
+    out="$("${ncd[@]}" up -d 2>&1)"
+    [ $? -ne 0 ] && ok || bad "#74-AC6.7" "a second run on the same .env was not refused"
+    "${ncd[@]}" down -v --remove-orphans --timeout 2 >/dev/null 2>&1
+    docker compose -p "$nproject" --env-file "$env_file" -f "$compose" -f "$fixture/override.yml" up env-check >/dev/null 2>&1 && ok || bad "#74-AC6.7" "env-check passes once the colon is removed, with no other change"
+    docker compose -p "$nproject" --env-file "$env_file" -f "$compose" -f "$fixture/override.yml" down -v --remove-orphans --timeout 2 >/dev/null 2>&1
 }
 
 # --- file storage is healthy only once its bucket exists (#74-AC5) -----------------------------------------------------------
@@ -536,6 +571,9 @@ all | live) live_checks ;;
 esac
 case "$only" in
 all | bucket) bucket_checks ;;
+esac
+case "$only" in
+env) env_checks ;;
 esac
 
 # #74-AC1.10: nothing in this output is a value from the .env
