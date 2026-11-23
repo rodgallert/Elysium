@@ -472,6 +472,34 @@ eq "#75-AC3.2" "the upstream saw the full Content-Length" "10485760" "$(echo_fie
 get prince.localhost /upload --data-binary "@$work/b10p" -H 'Content-Type: application/octet-stream'
 eq "#75-AC3.2" "a body of 10 MiB + 1 byte gets 413" "413" "$status"
 rm -f "$work/b10" "$work/b10p"
+# #75-AC3.2 (spec change 2026-11-23): at most 8 requests with a body in flight at the edge, so the body tmpfs can't fill. The 9th
+# gets 503 and reaches no upstream, a request with no body is never counted, nothing of the query string reaches the logs, and
+# a new upload passes once the 8 have finished.
+head -c 3000000 /dev/zero >"$work/slow"
+cap_marker="SECRET-MARKER-CAP-$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+cap_pids=()
+for i in 1 2 3 4 5 6 7 8; do
+    curl -s -o "$work/cap$i" -w '%{http_code}' --limit-rate 300k --max-time 60 -H 'Host: prince.localhost' --data-binary "@$work/slow" \
+        -H 'Content-Type: application/octet-stream' "http://127.0.0.1:80/cap$i" >"$work/cap$i.code" 2>/dev/null &
+    cap_pids+=($!)
+done
+sleep 3
+get prince.localhost "/cap9?token=$cap_marker" --data-binary 'x'
+eq "#75-AC3.2" "the 9th concurrent request with a body gets 503" "503" "$status"
+check "#75-AC3.2" "the 9th reaches no upstream" bash -c '! grep -q "backend=" <<<"$1"' _ "$body"
+get prince.localhost /cap-get
+eq "#75-AC3.2" "a request with no body still gets 200 while 8 uploads are in flight" "200" "$status"
+get prince.localhost /cap-get0 -X POST -H 'Content-Length: 0'
+eq "#75-AC3.2" "a request with Content-Length: 0 is not counted" "200" "$status"
+get evil.example /cap-evil --data-binary 'x'
+eq "#75-AC3.2" "an unknown host with a body still gets 421, not 503" "421" "$status"
+check "#75-AC3.2" "no query string reaches the edge's output" bash -c '! docker logs elysium-edge-edge-1 2>&1 | grep -q "$1"' _ "$cap_marker"
+for pid in "${cap_pids[@]}"; do wait "$pid"; done
+codes="$(cat "$work"/cap?.code | sort | uniq -c | awk '{printf "%s x%s ", $2, $1}')"
+eq "#75-AC3.2" "the 8 slow uploads all finished with 200" "200 x8 " "$codes"
+get prince.localhost /cap-after --data-binary @"$work/slow" -H 'Content-Type: application/octet-stream'
+eq "#75-AC3.2" "a new upload passes after the 8 have finished" "200" "$status"
+rm -f "$work"/slow "$work"/cap?*
 # a WebSocket upgrade reaches the upstream with Upgrade and Connection: upgrade; any other Upgrade value (h2c, a list, a
 # misspelling) is not forwarded, and the request goes out with Connection: close like any other
 get prince.localhost /ws -H 'Upgrade: websocket' -H 'Connection: Upgrade'
