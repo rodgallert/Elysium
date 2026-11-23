@@ -27,7 +27,7 @@ It's a work in progress that I build in the open to show how I design, build and
 **Built and merged**
 
 - **Isolated services.** Each service has its own database and never reads another's; shared services know nothing about the products using them. CI enforces the project boundaries.
-- **Per-part releases.** Each service, or each part it declares, has its own version, changelog, git tag and GitHub Release. Release images carry signed build provenance and an SBOM, and one file, `docker-compose.prod.yml`, pins the production images by digest. Every merge into `main` publishes development images.
+- **Per-part releases are set up.** Each service, or each part it declares, has its own version, changelog, git tag and GitHub Release; each release gets signed build provenance and an SBOM, and `docker-compose.prod.yml` pins its production images by digest. No service has been released yet. Every merge into `main` publishes development images.
 - **One required check.** A single `gate` check must pass before anything merges into `main`, and Markdown-only changes still get it.
 - **An edge proxy with strict rules.** The reverse proxy re-resolves its backends after a restart, never sends an unknown name to the host's resolver, and normalises request paths before any service sees them.
 
