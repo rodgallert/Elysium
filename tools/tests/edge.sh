@@ -197,8 +197,8 @@ for f in "$root/Prince/docker-compose.yml" "$root/docker-compose.prod.yml"; do
     out="$(lint_ports "$f" stack)" && [ -z "$out" ] && ok || bad "#75-AC2" "$(basename "$f"): a published port breaks the rule" "$out"
 done
 out="$(lint_ports "$edge_src/docker-compose.yml" edge)" && [ -z "$out" ] && ok || bad "#75-AC2" "Edge/docker-compose.yml: a published port breaks the rule" "$out"
-# #75-AC2.1 inputs: a bare port, 0.0.0.0 and [::] fail the lint (fixture files); a loopback port passes
-for n in bare all v6all; do
+# #75-AC2.1 inputs: a bare port, 0.0.0.0, [::] and network_mode: host fail the lint (fixture files); a loopback port passes
+for n in bare all v6all hostmode; do
     check "#75-AC2.1" "the lint fails the case \"$n\"" lint_fails "$fixture/fixtures/ports-$n.yml"
 done
 out="$(lint_ports "$fixture/fixtures/ports-ok.yml")"
@@ -390,6 +390,42 @@ eq "#75-AC3.1" "an empty Host header gets 421" "421" "$(raw_status 'GET / HTTP/1
 eq "#75-AC3.1" "no Host header (HTTP/1.1) gets 421" "421" "$(raw_status 'GET / HTTP/1.1\r\nConnection: close\r\n\r\n')"
 eq "#75-AC3.1" "two Host headers get 400" "400" "$(raw_status 'GET / HTTP/1.1\r\nHost: prince.localhost\r\nHost: prince.localhost\r\nConnection: close\r\n\r\n')"
 eq "#75-AC3.1" "two different Host headers get 400" "400" "$(raw_status 'GET / HTTP/1.1\r\nHost: prince.localhost\r\nHost: prince.dev.localhost\r\nConnection: close\r\n\r\n')"
+# A request nginx can't parse is the edge's own 400, never a 5xx and never an upstream (PO decision 2026-11-23): a malformed
+# request line, an invalid percent sequence, a raw space, a NUL, a path above /, an invalid header line (Host sent before it).
+# Only an empty, missing or unknown Host is 421.
+hostline='Host: prince.localhost\r\nConnection: close\r\n\r\n'
+malformed_400() { # description printf-format: 400, no upstream content, the security headers on the answer
+    local resp st
+    resp="$(raw "$2")"
+    st="$(head -1 <<<"$resp" | awk '{print $2}')"
+    eq "#75-AC3.1" "$1: the edge answers 400" "400" "$st"
+    check "#75-AC3.1" "$1: no upstream was reached" bash -c '! grep -q "backend=" <<<"$1"' _ "$resp"
+}
+malformed_400 "a garbage request line" 'GARBAGE\r\n\r\n'
+malformed_400 "a method with an invalid character (G@T)" "G@T / HTTP/1.1\r\n$hostline"
+malformed_400 "a request line with no leading slash (GET x)" "GET x HTTP/1.1\r\n$hostline"
+malformed_400 "a request line with no target" 'GET\r\n\r\n'
+malformed_400 "junk after the protocol" "GET / HTTP/1.1 x\r\n$hostline"
+malformed_400 "an invalid percent sequence (/%zz)" "GET /%%zz HTTP/1.1\r\n$hostline"
+malformed_400 "an encoded NUL (/a%00b)" "GET /a%%00b HTTP/1.1\r\n$hostline"
+malformed_400 "a raw space in the path" "GET /a b HTTP/1.1\r\n$hostline"
+malformed_400 "a path that climbs above / (/x/../../etc, encoded)" "GET /x/%%2e%%2e/%%2e%%2e/etc HTTP/1.1\r\n$hostline"
+malformed_400 "an invalid header line after the Host line" 'GET / HTTP/1.1\r\nHost: prince.localhost\r\nbad header line\r\nConnection: close\r\n\r\n'
+# the same on an unknown or missing Host: a request that can't be parsed never gets a 5xx either
+st="$(raw_status 'GARBAGE\r\n\r\n')"
+case "$st" in 5*) bad "#75-AC3.1" "a garbage request line got $st" ;; *) ok ;; esac
+# an invalid header line sent before the Host line leaves the Host unread: an empty Host, so 421 (documented in Edge/README.md)
+eq "#75-AC3.1" "an invalid header line before the Host line leaves the Host unread: 421" "421" "$(raw_status 'GET / HTTP/1.1\r\nbad header line\r\nHost: prince.localhost\r\nConnection: close\r\n\r\n')"
+resp="$(raw 'GARBAGE\r\n\r\n')"
+hdrs="$(tr -d '\r' <<<"$resp")"
+# (expect_headers is defined below with the headers tests; this one is repeated there)
+malformed_hdrs="$hdrs"
+# the edge's internal error location is not reachable by a client: 404 or 421, never its content
+for h in prince.localhost evil.example; do
+    get "$h" /.edge-400
+    case "$status" in 404 | 421) ok ;; *) bad "#75-AC3.1" "a client requesting /.edge-400 with Host $h got $status, expected 404 or 421" ;; esac
+    check "#75-AC3.1" "a client requesting /.edge-400 (Host $h) sees no content of the error location" bash -c '! grep -q "bad request" <<<"$1"' _ "$body"
+done
 # an absolute-form request line does not smuggle another Host past the allow-list
 resp="$(raw 'GET http://prince.localhost/x HTTP/1.1\r\nHost: evil.example\r\nConnection: close\r\n\r\n')"
 check "#75-AC3.1" "an absolute-form request line with a foreign Host header never reaches the production proxy" bash -c '! grep -q "backend=prod" <<<"$1"' _ "$resp"
@@ -429,9 +465,21 @@ eq "#75-AC3.2" "the upstream saw the full Content-Length" "10485760" "$(echo_fie
 get prince.localhost /upload --data-binary "@$work/b10p" -H 'Content-Type: application/octet-stream'
 eq "#75-AC3.2" "a body of 10 MiB + 1 byte gets 413" "413" "$status"
 rm -f "$work/b10" "$work/b10p"
-# a WebSocket upgrade reaches the upstream with Upgrade and Connection: upgrade
+# a WebSocket upgrade reaches the upstream with Upgrade and Connection: upgrade; any other Upgrade value (h2c, a list, a
+# misspelling) is not forwarded, and the request goes out with Connection: close like any other
 get prince.localhost /ws -H 'Upgrade: websocket' -H 'Connection: Upgrade'
 eq "#75-AC3.2" "WebSocket upgrade: Upgrade and Connection reach the upstream" "websocket upgrade" "$(echo_field upgrade) $(echo_field connection)"
+get prince.localhost /ws -H 'Upgrade: WebSocket' -H 'Connection: upgrade'
+eq "#75-AC3.2" "WebSocket upgrade in another case: forwarded as websocket" "websocket upgrade" "$(echo_field upgrade) $(echo_field connection)"
+get prince.localhost /ws -H 'Upgrade: h2c' -H 'Connection: Upgrade, HTTP2-Settings' -H 'HTTP2-Settings: AAMAAABkAAQAAP__'
+eq "#75-AC3.2" "Upgrade: h2c is not forwarded and the request goes out with Connection: close" " close" "$(echo_field upgrade) $(echo_field connection)"
+for u in 'websocket, h2c' 'websockets' 'h2c, websocket' 'foo'; do
+    get prince.localhost /ws -H "Upgrade: $u" -H 'Connection: Upgrade'
+    eq "#75-AC3.2" "Upgrade: $u is not forwarded (Connection: close)" "close" "$(echo_field connection)"
+    check "#75-AC3.2" "Upgrade: $u leaves no Upgrade header on the request to the stack" bash -c '[ -z "$1" ]' _ "$(echo_field upgrade)"
+done
+get prince.localhost /x
+eq "#75-AC3.2" "no Upgrade from the client: no Upgrade to the stack and Connection: close" " close" "$(echo_field upgrade) $(echo_field connection)"
 
 # #75-AC3.5 concurrency: 200 parallel requests, only 200 (stubs are up), RestartCount stays 0
 codes="$(seq 1 200 | xargs -P 40 -I{} curl -s -o /dev/null -w '%{http_code}\n' --max-time 30 -H 'Host: prince.localhost' "http://127.0.0.1:80/p{}" | sort | uniq -c | awk '{printf "%s x%s ", $2, $1}')"
@@ -444,13 +492,17 @@ eq "#75-AC3.5" "RestartCount stays 0" "0" "$(restarts)"
 
 echo "== #75-AC4: headers"
 # #75-AC4.1 inputs: what the client says about itself is replaced
-get prince.localhost /h -H 'X-Forwarded-Host: prince.dev.localhost' -H 'X-Forwarded-For: 1.2.3.4' -H 'X-Forwarded-Proto: https' -H 'X-Real-IP: 5.6.7.8' -H 'Forwarded: for=9.9.9.9'
+get prince.localhost /h -H 'X-Forwarded-Host: prince.dev.localhost' -H 'X-Forwarded-For: 1.2.3.4' -H 'X-Forwarded-Proto: https' -H 'X-Real-IP: 5.6.7.8' -H 'Forwarded: for=9.9.9.9' \
+    -H 'X-Forwarded-Prefix: /evil' -H 'X-Forwarded-Port: 4443' -H 'X-Forwarded-Server: evil.example' -H 'X-Original-URL: /admin' -H 'X-Rewrite-URL: /admin'
 eq "#75-AC4.1" "X-Forwarded-Host is the matched host" "prince.localhost" "$(echo_field xfh)"
 eq "#75-AC4.1" "X-Forwarded-Proto is http" "http" "$(echo_field proto)"
 eq "#75-AC4.1" "X-Real-IP is removed" "" "$(echo_field xri)"
 xff="$(echo_field xff)"
 check "#75-AC4.1" "X-Forwarded-For holds one address, the client's, not 1.2.3.4 (got: $xff)" bash -c '[[ "$1" =~ ^[0-9a-f.:]+$ ]] && [ "$1" != 1.2.3.4 ]' _ "$xff"
 check "#75-AC4.1" "Forwarded is not passed on" bash -c '! grep -qi "9.9.9.9" <<<"$1"' _ "$body"
+for f in xfp xfport xfs xou xru; do
+    eq "#75-AC4.1" "the client's value of the field $f does not reach the stack" "" "$(echo_field $f)"
+done
 get 'PRINCE.localhost:80' /h
 eq "#75-AC4.1" "Host and X-Forwarded-Host are the normalised name" "prince.localhost prince.localhost" "$(echo_field host) $(echo_field xfh)"
 # the security headers on every response (#75-AC4.3: 200, 421, 404, 502 and the edge's own 400/413)
@@ -476,6 +528,8 @@ eq "#75-AC4.3" "a relative redirect stays relative" "/redirected" "$(header loca
 resp="$(raw 'GET / HTTP/1.1\r\nHost: prince.localhost\r\nHost: prince.localhost\r\nConnection: close\r\n\r\n')"
 hdrs="$(tr -d '\r' <<<"$resp")"
 expect_headers "#75-AC4.3" "security headers on the edge's own 400"
+hdrs="$malformed_hdrs"
+expect_headers "#75-AC4.3" "security headers on the 400 for a malformed request line"
 # #75-AC4.6 partial failure: an upstream that sets the same headers does not double them
 get prince.localhost /dup
 expect_headers "#75-AC4.6" "an upstream's own X-Frame-Options, X-Content-Type-Options, Referrer-Policy and CSP are replaced, not doubled"
@@ -512,7 +566,18 @@ poll_status prince.localhost /x 200 14 || bad "#75-AC5.3" "the production stub i
 mark="$(log_lines)"
 get 'Rejected.Example' /x
 line="$(logs_since "$mark" | tail -1)"
-eq "#75-AC5.3" "a 421 line shows the rejected Host" "421 rejected.example" "$(jq -r '"\(.status) \(.host)"' <<<"$line")"
+eq "#75-AC5.3" "a 421 line shows the rejected Host as sent" "421 Rejected.Example" "$(jq -r '"\(.status) \(.host)"' <<<"$line")"
+# the log shows the Host that was routed on, the header, not the host of an absolute-form request line (#75-AC5.10)
+mark="$(log_lines)"
+raw 'GET http://evil.example/x HTTP/1.1\r\nHost: prince.dev.localhost\r\nConnection: close\r\n\r\n' >/dev/null
+sleep 0.3
+line="$(logs_since "$mark" | tail -1)"
+eq "#75-AC5.10" "absolute-form with a foreign request-line host: the line shows the Host header that was routed" "200 prince.dev.localhost" "$(jq -r '"\(.status) \(.host)"' <<<"$line")"
+mark="$(log_lines)"
+raw 'GET http://prince.dev.localhost/ HTTP/1.1\r\nHost: evil.example\r\nConnection: close\r\n\r\n' >/dev/null
+sleep 0.3
+line="$(logs_since "$mark" | tail -1)"
+eq "#75-AC5.3" "absolute-form with a foreign Host header: the 421 line shows the rejected Host header" "421 evil.example" "$(jq -r '"\(.status) \(.host)"' <<<"$line")"
 # #75-AC5.10: the fields
 get prince.localhost /x
 sleep 0.2
@@ -602,6 +667,14 @@ get prince.localhost '/api/a%0Ab'
 eq "#75-AC7.1" "an encoded newline stays encoded" 'GET /api/a%0Ab HTTP/1.1' "$(echo_req)"
 get prince.localhost '/api/a%0D%0Ab'
 eq "#75-AC7.1" "an encoded CRLF stays encoded" 'GET /api/a%0D%0Ab HTTP/1.1' "$(echo_req)"
+# #75-AC6.1 (spec change 2026-11-23): percent-encoded characters, an encoded slash included, are decoded once and the path
+# normalised at the edge, as the stack's proxy has done since #73: /api/a%2Fb reaches the API as /api/a/b, /api/%2F as /api/
+get prince.localhost '/api/a%2Fb'
+eq "#75-AC6.1" "/api/a%2Fb reaches the upstream as /api/a/b" 'GET /api/a/b HTTP/1.1' "$(echo_req)"
+get prince.localhost '/api/%2F'
+eq "#75-AC6.1" "/api/%2F reaches the upstream as /api/" 'GET /api/ HTTP/1.1' "$(echo_req)"
+get prince.localhost '/api/a%2fb?x=%2F'
+eq "#75-AC6.1" "a lower-case %2f is decoded too, and the query string is not touched" 'GET /api/a/b?x=%2F HTTP/1.1' "$(echo_req)"
 # #75-AC7.7 idempotence: the raw and the encoded form of one path reach the upstream as the same request line
 for ch in "${!enc[@]}"; do
     get prince.localhost "/api/a${ch}b"

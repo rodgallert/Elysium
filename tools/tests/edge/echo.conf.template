@@ -26,6 +26,6 @@ server {
 
     location / {
         default_type text/plain;
-        return 200 "backend=${BACKEND_NAME} request=$request host=$http_host xff=$http_x_forwarded_for xfh=$http_x_forwarded_host proto=$http_x_forwarded_proto xri=$http_x_real_ip upgrade=$http_upgrade connection=$http_connection cookie=$http_cookie auth=$http_authorization len=$http_content_length\n";
+        return 200 "backend=${BACKEND_NAME} request=$request host=$http_host xff=$http_x_forwarded_for xfh=$http_x_forwarded_host proto=$http_x_forwarded_proto xri=$http_x_real_ip upgrade=$http_upgrade connection=$http_connection cookie=$http_cookie auth=$http_authorization len=$http_content_length xfp=$http_x_forwarded_prefix xfport=$http_x_forwarded_port xfs=$http_x_forwarded_server xou=$http_x_original_url xru=$http_x_rewrite_url\n";
     }
 }
