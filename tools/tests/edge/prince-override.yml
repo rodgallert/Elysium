@@ -1,0 +1,4 @@
+# Smoke override of tools/tests/edge.sh for Prince/docker-compose.yml: no fixed host port for the Silo console (a running stack keeps 9001).
+services:
+  file-storage:
+    ports: !override []
