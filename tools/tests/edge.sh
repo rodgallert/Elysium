@@ -167,6 +167,8 @@ echo "== static: config, lint, nginx -t"
 
 edge_json="$(docker compose -f "$edge_src/docker-compose.yml" config --no-interpolate --format json 2>&1)"
 [ -n "$edge_json" ] && jq -e . >/dev/null 2>&1 <<<"$edge_json" || { echo "FAIL: Edge/docker-compose.yml does not parse: $edge_json"; exit 1; }
+# jq_ok <json> <filter>: succeeds when the filter is true; its output goes nowhere, so a check's own FAIL line is still printed
+jq_ok() { jq -e "$2" >/dev/null <<<"$1"; }
 svc() { jq -r ".services.edge | $1" <<<"$edge_json"; }
 
 # #75-AC1.1 inputs: nginx -t rejects a broken config before any container starts, and accepts the real one (same flags as the container)
@@ -182,10 +184,10 @@ eq "#75-AC1" "runs as a non-root user" "101:101" "$(svc .user)"
 eq "#75-AC1" "read_only" "true" "$(svc .read_only)"
 eq "#75-AC1" "cap_drop ALL" '["ALL"]' "$(svc '.cap_drop' | jq -c .)"
 eq "#75-AC1" "no-new-privileges" '["no-new-privileges:true"]' "$(svc '.security_opt' | jq -c .)"
-check "#75-AC1" "tmpfs for nginx's cache and pid paths" jq -e '.services.edge.tmpfs | (index("/tmp:uid=101,gid=101,mode=1777,size=16m") != null) and (map(startswith("/var/cache/nginx:")) | any)' <<<"$edge_json" >/dev/null
+check "#75-AC1" "tmpfs for nginx's cache and pid paths" jq_ok "$edge_json" '.services.edge.tmpfs | (index("/tmp:uid=101,gid=101,mode=1777,size=16m") != null) and (map(startswith("/var/cache/nginx:")) | any)'
 check "#75-AC1" "the pid file is on the tmpfs, not on a read-only path" grep -q '^pid /tmp/' "$edge_src/nginx.conf"
 # the PO-confirmed values (2026-11-23): the cache tmpfs, the process limit and the health check's retries and start timings
-check "#75-AC1" "tmpfs /var/cache/nginx is 128 MiB" jq -e '.services.edge.tmpfs | index("/var/cache/nginx:uid=101,gid=101,mode=0755,size=128m") != null' <<<"$edge_json" >/dev/null
+check "#75-AC1" "tmpfs /var/cache/nginx is 128 MiB" jq_ok "$edge_json" '.services.edge.tmpfs | index("/var/cache/nginx:uid=101,gid=101,mode=0755,size=128m") != null'
 eq "#75-AC1" "pids_limit 100" "100" "$(svc .pids_limit)"
 eq "#75-AC1.4" "health check retries 3, start_period 5s, start_interval 1s" "3 5s 1s" "$(svc '.healthcheck | "\(.retries) \(.start_period) \(.start_interval)"')"
 # #75-AC1.4 time: the check's interval 5 s and timeout 3 s
@@ -472,34 +474,47 @@ eq "#75-AC3.2" "the upstream saw the full Content-Length" "10485760" "$(echo_fie
 get prince.localhost /upload --data-binary "@$work/b10p" -H 'Content-Type: application/octet-stream'
 eq "#75-AC3.2" "a body of 10 MiB + 1 byte gets 413" "413" "$status"
 rm -f "$work/b10" "$work/b10p"
-# #75-AC3.2 (spec change 2026-11-23): at most 8 requests with a body in flight at the edge, so the body tmpfs can't fill. The 9th
-# gets 503 and reaches no upstream, a request with no body is never counted, nothing of the query string reaches the logs, and
-# a new upload passes once the 8 have finished.
-head -c 3000000 /dev/zero >"$work/slow"
+# #75-AC3.2 (spec change 2026-11-23, per environment): at most 4 requests with a body in flight per environment at the edge (Content-Length
+# above 0 or any Transfer-Encoding), so the body tmpfs can't fill (2 x 4 x 10 MiB < 128 MiB). The 5th of one environment gets 503 and
+# reaches no upstream, the other environment is not affected, a request with no body is never counted, nothing of the query string
+# reaches the logs, and a new upload passes once the held ones have finished.
+head -c 2500000 /dev/zero >"$work/slow"
 cap_marker="SECRET-MARKER-CAP-$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-cap_pids=()
-for i in 1 2 3 4 5 6 7 8; do
-    curl -s -o "$work/cap$i" -w '%{http_code}\n' --limit-rate 300k --max-time 60 -H 'Host: prince.localhost' --data-binary "@$work/slow" \
-        -H 'Content-Type: application/octet-stream' "http://127.0.0.1:80/cap$i" >"$work/cap$i.code" 2>/dev/null &
-    cap_pids+=($!)
-done
-sleep 3
-get prince.localhost "/cap9?token=$cap_marker" --data-binary 'x'
-eq "#75-AC3.2" "the 9th concurrent request with a body gets 503" "503" "$status"
-check "#75-AC3.2" "the 9th reaches no upstream" bash -c '! grep -q "backend=" <<<"$1"' _ "$body"
-get prince.localhost /cap-get
-eq "#75-AC3.2" "a request with no body still gets 200 while 8 uploads are in flight" "200" "$status"
-get prince.localhost /cap-get0 -X POST -H 'Content-Length: 0'
-eq "#75-AC3.2" "a request with Content-Length: 0 is not counted" "200" "$status"
-get evil.example /cap-evil --data-binary 'x'
-eq "#75-AC3.2" "an unknown host with a body still gets 421, not 503" "421" "$status"
-check "#75-AC3.2" "no query string reaches the edge's output" bash -c '! docker logs elysium-edge-edge-1 2>&1 | grep -q "$1"' _ "$cap_marker"
-for pid in "${cap_pids[@]}"; do wait "$pid"; done
-codes="$(cat "$work"/cap?.code | sort | uniq -c | awk '{printf "%s x%s ", $2, $1}')"
-eq "#75-AC3.2" "the 8 slow uploads all finished with 200" "200 x8 " "$codes"
-get prince.localhost /cap-after --data-binary @"$work/slow" -H 'Content-Type: application/octet-stream'
-eq "#75-AC3.2" "a new upload passes after the 8 have finished" "200" "$status"
-rm -f "$work"/slow "$work"/cap?*
+cap_scenario() { # held-host other-host: holds 4 uploads on the first (2 with Content-Length, 2 chunked), then probes
+    local held="$1" other="$2" i pid st
+    local -a pids=()
+    for i in 1 2 3 4; do
+        local -a te=()
+        [ "$i" -gt 2 ] && te=(-H 'Transfer-Encoding: chunked')
+        curl -s -o "$work/cap$i" -w '%{http_code}\n' --limit-rate 250k --max-time 60 -H "Host: $held" --data-binary "@$work/slow" \
+            -H 'Content-Type: application/octet-stream' "${te[@]}" "http://127.0.0.1:80/cap$i" >"$work/cap$i.code" 2>/dev/null &
+        pids+=($!)
+    done
+    sleep 3
+    get "$held" "/cap5?token=$cap_marker" --data-binary 'x'
+    eq "#75-AC3.2" "$held: the 5th concurrent request with a body (Content-Length) gets 503" "503" "$status"
+    check "#75-AC3.2" "$held: the 5th reaches no upstream" bash -c '! grep -q "backend=" <<<"$1"' _ "$body"
+    get "$held" "/cap5c?token=$cap_marker" -H 'Transfer-Encoding: chunked' --data-binary 'x'
+    eq "#75-AC3.2" "$held: a 5th chunked request (Transfer-Encoding) gets 503 too" "503" "$status"
+    check "#75-AC3.2" "$held: the chunked 5th reaches no upstream" bash -c '! grep -q "backend=" <<<"$1"' _ "$body"
+    get "$other" /cap-other --data-binary 'x'
+    eq "#75-AC3.2" "$other: an upload passes while $held holds 4" "200" "$status"
+    get "$held" /cap-get
+    eq "#75-AC3.2" "$held: a request with no body still gets 200 while 4 uploads are in flight" "200" "$status"
+    get "$held" /cap-get0 -X POST -H 'Content-Length: 0'
+    eq "#75-AC3.2" "$held: a request with Content-Length: 0 is not counted" "200" "$status"
+    get evil.example /cap-evil --data-binary 'x'
+    eq "#75-AC3.2" "an unknown host with a body gets 421, not 503" "421" "$status"
+    check "#75-AC3.2" "no query string reaches the edge's output" bash -c '! docker logs elysium-edge-edge-1 2>&1 | grep -q "$1"' _ "$cap_marker"
+    for pid in "${pids[@]}"; do wait "$pid"; done
+    eq "#75-AC3.2" "$held: the 4 slow uploads all finished with 200" "200 x4 " "$(cat "$work"/cap?.code | sort | uniq -c | awk '{printf "%s x%s ", $2, $1}')"
+    get "$held" /cap-after --data-binary @"$work/slow" -H 'Content-Type: application/octet-stream'
+    eq "#75-AC3.2" "$held: a new upload passes after the held ones have finished" "200" "$status"
+    rm -f "$work"/cap?*
+}
+cap_scenario prince.localhost prince.dev.localhost
+cap_scenario prince.dev.localhost prince.localhost
+rm -f "$work/slow"
 # a WebSocket upgrade reaches the upstream with Upgrade and Connection: upgrade; any other Upgrade value (h2c, a list, a
 # misspelling) is not forwarded, and the request goes out with Connection: close like any other
 get prince.localhost /ws -H 'Upgrade: websocket' -H 'Connection: Upgrade'
@@ -513,6 +528,10 @@ for u in 'websocket, h2c' 'websockets' 'h2c, websocket' 'foo'; do
     eq "#75-AC3.2" "Upgrade: $u is not forwarded (Connection: close)" "close" "$(echo_field connection)"
     check "#75-AC3.2" "Upgrade: $u leaves no Upgrade header on the request to the stack" bash -c '[ -z "$1" ]' _ "$(echo_field upgrade)"
 done
+get prince.localhost /ws -H 'Upgrade: websocket' -H 'Connection: close'
+eq "#75-AC3.2" "Upgrade: websocket with a Connection header that does not list upgrade is not forwarded" " close" "$(echo_field upgrade) $(echo_field connection)"
+get prince.localhost /ws -H 'Upgrade: websocket' -H 'Connection: keep-alive, Upgrade'
+eq "#75-AC3.2" "Upgrade: websocket with Connection: keep-alive, Upgrade is forwarded" "websocket upgrade" "$(echo_field upgrade) $(echo_field connection)"
 get prince.localhost /x
 eq "#75-AC3.2" "no Upgrade from the client: no Upgrade to the stack and Connection: close" " close" "$(echo_field upgrade) $(echo_field connection)"
 
@@ -617,7 +636,7 @@ eq "#75-AC5.3" "absolute-form with a foreign Host header: the 421 line shows the
 get prince.localhost /x
 sleep 0.2
 line="$(docker logs elysium-edge-edge-1 2>/dev/null | tail -1)"
-check "#75-AC5.10" "the line has time, host, method, path, status, upstream and request_time" jq -e 'has("time") and has("host") and has("method") and has("path") and has("status") and has("upstream") and has("request_time") and (keys | length == 7)' <<<"$line" >/dev/null
+check "#75-AC5.10" "the line has time, host, method, path, status, upstream and request_time" jq_ok "$line" 'has("time") and has("host") and has("method") and has("path") and has("status") and has("upstream") and has("request_time") and (keys | length == 7)'
 eq "#75-AC5.10" "host and upstream are filled in" "prince.localhost GET /x 200 true" "$(jq -r '"\(.host) \(.method) \(.path) \(.status) \(.upstream | test("^[0-9.]+:80$"))"' <<<"$line")"
 # #75-AC5.4: UTC ISO 8601
 check "#75-AC5.4" "the time is UTC ISO 8601 (got $(jq -r .time <<<"$line"))" bash -c '[[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\+00:00$ ]]' _ "$(jq -r .time <<<"$line")"
