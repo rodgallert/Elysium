@@ -67,7 +67,7 @@ cp .env.example .env
 docker compose up -d --wait
 ```
 
-A one-shot `env-check` refuses invalid `.env` values before anything else starts, (the services that need the secrets don't start); `docker compose logs env-check` names the variable. See [Prince's README](Prince/README.md) for what comes up and where.
+A one-shot `env-check` refuses invalid `.env` values before the services that need the secrets start; `docker compose logs env-check` names the variable. See [Prince's README](Prince/README.md) for what comes up and where.
 
 Next is the Environments plan, in progress and not built yet: separate production and development stacks behind one edge proxy that listens on loopback only, at `prince.localhost` and `prince.dev.localhost` (and later one hostname per app). The design is in [`Docs/environments-design.md`](Docs/environments-design.md).
 
