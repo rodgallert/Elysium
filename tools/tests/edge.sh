@@ -143,13 +143,15 @@ poll_status() {
 # --- the published-port lint (#75-AC2, AC2.1) --------------------------------------------------------------------
 # lint_ports <compose file> [edge|stack]: prints one line per published port that breaks the rule. Every published port
 # names 127.0.0.1 or ::1. In the edge's file the ports are exactly 127.0.0.1:80 and [::1]:80 (container 8080); in any
-# other file nothing is published except the Silo console, 127.0.0.1:9001 of file-storage.
+# other file nothing is published except the Silo console, 127.0.0.1:9001 of file-storage. `network_mode: host` fails in every
+# file: the container would listen on every interface with no `ports` to read.
 lint_ports() {
     local file="$1" kind="${2:-any}" cfg
     cfg="$(docker compose -f "$file" config --no-interpolate --format json 2>&1)" || { echo "$file: docker compose config failed: $(head -1 <<<"$cfg")"; return 1; }
     jq -r --arg f "$file" --arg kind "$kind" '
         [.services | to_entries[] | .key as $s | (.value.ports // [])[] | {s: $s, ip: (.host_ip // ""), pub: (.published // ""), tgt: (.target | tostring)}] as $ports
         | ($ports[] | select(.ip != "127.0.0.1" and .ip != "::1") | "\($f): \(.s): published port \(.pub):\(.tgt) is not bound to 127.0.0.1 or ::1 (host address \(.ip | if . == "" then "missing, so every interface" else . end))"),
+          (.services | to_entries[] | select(.value.network_mode == "host") | "\($f): \(.key): network_mode: host listens on every interface of the machine"),
           (if $kind == "edge" then
               (if ([$ports[] | "\(.ip)|\(.pub)|\(.tgt)"] | sort) != ["127.0.0.1|80|8080", "::1|80|8080"] then "\($f): the edge must publish exactly 127.0.0.1:80 and [::1]:80 (container 8080)" else empty end)
            elif $kind == "stack" then
