@@ -479,7 +479,7 @@ head -c 3000000 /dev/zero >"$work/slow"
 cap_marker="SECRET-MARKER-CAP-$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 cap_pids=()
 for i in 1 2 3 4 5 6 7 8; do
-    curl -s -o "$work/cap$i" -w '%{http_code}' --limit-rate 300k --max-time 60 -H 'Host: prince.localhost' --data-binary "@$work/slow" \
+    curl -s -o "$work/cap$i" -w '%{http_code}\n' --limit-rate 300k --max-time 60 -H 'Host: prince.localhost' --data-binary "@$work/slow" \
         -H 'Content-Type: application/octet-stream' "http://127.0.0.1:80/cap$i" >"$work/cap$i.code" 2>/dev/null &
     cap_pids+=($!)
 done
