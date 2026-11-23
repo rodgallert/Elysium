@@ -807,7 +807,8 @@ if [ "${EDGE_SMOKE:-0}" = 1 ]; then
     eq "#75-AC6" "/api/health answers 200" "200" "$status"
     get prince.localhost /api/
     eq "#75-AC6" "/api/ answers 404" "404" "$status"
-    # #75-AC6.1 inputs: a query string and an encoded slash reach the API unchanged, a trailing-slash redirect stays relative
+    # #75-AC6.1 (spec change 2026-11-23): the encoded slash is decoded once at the edge as in the stack's own proxy (the loop above
+    # compares both; the stub test pins what the upstream receives); a trailing-slash redirect stays relative
     get prince.localhost /vue
     eq "#75-AC6.1" "/vue redirects to a relative /vue/" "/vue/" "$(header location)"
     # #75-AC7.9: the raw-character cases on every real route get the status of the encoded form
@@ -819,14 +820,21 @@ if [ "${EDGE_SMOKE:-0}" = 1 ]; then
             eq "#75-AC7.9" "${r}a${ch}b: the raw and the encoded form get the same status" "$s1" "$status"
         done
     done
-    # #75-AC6.4: recorded, not gated
-    t0="$(now_ms)"
-    for _ in $(seq 1 50); do curl -s -o /dev/null -H 'Host: prince.localhost' http://127.0.0.1:80/api/health; done
-    t1="$(now_ms)"
-    echo "note: 50 requests of /api/health through the edge took $((t1 - t0)) ms ($(((t1 - t0) / 50)) ms each)"
+    # #75-AC6.4: recorded, not gated. The p95 of /api/health through the edge and straight to the stack's proxy (its address on
+    # elysium-edge), 100 sequential requests each with the same curl, and the difference; then a warm `up --wait` of the stack
+    # started again after `stop` (stopped, not removed, images cached).
+    pip="$(docker inspect -f '{{(index .NetworkSettings.Networks "elysium-edge").IPAddress}}' "$pcid" 2>/dev/null)"
+    p95_ms() { # url: p95 of 100 sequential requests, in ms (the 95th of the sorted times)
+        local i
+        for i in $(seq 1 100); do curl -s -o /dev/null -w '%{time_total}\n' -H 'Host: prince.localhost' "$1"; done | sort -n | awk 'NR == 95 {printf "%.1f", $1 * 1000}'
+    }
+    p95_edge="$(p95_ms http://127.0.0.1:80/api/health)"
+    p95_direct="$(p95_ms "http://$pip/api/health")"
+    echo "note: /api/health p95 of 100 sequential requests: ${p95_edge} ms through the edge, ${p95_direct} ms straight to the stack's proxy, the edge adds $(awk -v a="$p95_edge" -v b="$p95_direct" 'BEGIN {printf "%.1f", a - b}') ms"
+    pdc stop >/dev/null 2>&1
     start="$(now_ms)"
-    pdc up -d --wait >/dev/null 2>&1
-    echo "note: warm Prince up --wait took $(($(now_ms) - start)) ms (budget 25000)"
+    out="$(pdc up -d --wait 2>&1)" && ok || bad "#75-AC6.4" "the warm up --wait after stop failed" "$(tail -5 <<<"$out")"
+    echo "note: warm Prince up --wait (stopped, not removed, images cached) took $(($(now_ms) - start)) ms (budget 25000)"
     # #75-AC6.6: with the stack's reverse-proxy stopped, prince.localhost gives 502 and prince.dev.localhost never gives prod content
     pdc stop reverse-proxy >/dev/null 2>&1
     sleep 11
