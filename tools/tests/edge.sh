@@ -432,7 +432,7 @@ malformed_hdrs="$hdrs"
 # the edge's internal error location is not reachable by a client: 404 or 421, never its content
 for h in prince.localhost evil.example; do
     get "$h" /.edge-400
-    case "$status" in 404 | 421) ok ;; *) bad "#75-AC3.1" "a client requesting /.edge-400 with Host $h got $status, expected 404 or 421" ;; esac
+    eq "#75-AC3.1" "a client requesting /.edge-400 with Host $h gets 404 (it is internal and proxies nothing)" "404" "$status"
     check "#75-AC3.1" "a client requesting /.edge-400 (Host $h) sees no content of the error location" bash -c '! grep -q "bad request" <<<"$1"' _ "$body"
 done
 # an absolute-form request line does not smuggle another Host past the allow-list
@@ -528,6 +528,13 @@ for u in 'websocket, h2c' 'websockets' 'h2c, websocket' 'foo'; do
     eq "#75-AC3.2" "Upgrade: $u is not forwarded (Connection: close)" "close" "$(echo_field connection)"
     check "#75-AC3.2" "Upgrade: $u leaves no Upgrade header on the request to the stack" bash -c '[ -z "$1" ]' _ "$(echo_field upgrade)"
 done
+# the Upgrade value can't supply the `upgrade` token that the Connection header must list
+get prince.localhost /ws -H 'Upgrade: websocket upgrade'
+eq "#75-AC3.2" "Upgrade: websocket upgrade (no Connection) is not forwarded" " close" "$(echo_field upgrade) $(echo_field connection)"
+get prince.localhost /ws -H 'Upgrade: websocket upgrade' -H 'Connection: close'
+eq "#75-AC3.2" "Upgrade: websocket upgrade with Connection: close is not forwarded" " close" "$(echo_field upgrade) $(echo_field connection)"
+get prince.localhost /ws -H 'Upgrade: websocket h2c' -H 'Connection: upgrade'
+eq "#75-AC3.2" "Upgrade: websocket h2c with Connection: upgrade is not forwarded" " close" "$(echo_field upgrade) $(echo_field connection)"
 get prince.localhost /ws -H 'Upgrade: websocket' -H 'Connection: close'
 eq "#75-AC3.2" "Upgrade: websocket with a Connection header that does not list upgrade is not forwarded" " close" "$(echo_field upgrade) $(echo_field connection)"
 get prince.localhost /ws -H 'Upgrade: websocket' -H 'Connection: keep-alive, Upgrade'
