@@ -39,7 +39,7 @@ The full design, with the reasoning behind each decision:
 
 ## How this is built
 
-Elysium is built with AI coding agents, deliberately and in the open. I own the architecture, the scope and every decision; the agents do much of the drafting, coding and reviewing, inside a process designed to keep quality high:
+Elysium is built in the open. I design it and write code myself, alongside AI coding agents that also draft, code and review, inside a process designed to keep quality high:
 
 - **Design reviews before code.** Each significant piece of design goes through a structured review in which agents argue it from separate angles — architecture, security, testing, reliability and performance, data, user experience — over several rounds. Disagreements and open questions come to me; I decide, and the outcome lands in the design documents and decision logs.
 - **One ticket, one branch, one pull request.** Every change is a GitHub issue with its own branch and PR, tracked on a project board.
@@ -58,3 +58,11 @@ docker compose up --build
 ```
 
 See [Prince's README](Prince/README.md) for what comes up and where. A single root `docker-compose.yml` for the whole ecosystem, with one hostname per app (`accounts.localhost`, `prince.localhost`, `api.localhost`), arrives with Masquerade and Keeper.
+
+## Status
+
+Elysium is a portfolio and learning project, not production-ready. There are no support, stability or compatibility commitments, and anything in it may change or break at any time. The [MIT License](LICENSE) provides the software "as is", without warranty.
+
+## License
+
+Elysium is released under the [MIT License](LICENSE).
