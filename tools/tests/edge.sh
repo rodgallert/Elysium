@@ -10,7 +10,8 @@
 #                 Compose project of its own (a few minutes). Not run in CI.
 # Needs Docker with Compose 2.22+, curl, jq, ss and a free loopback port 80 (the test uses the real ports and network names,
 # so it can't run next to a running edge: it says so and stops, or fails when CI is set).
-# Takes about 3 minutes (one 30 s wait for the upstream read timeout).
+# Takes about 2 minutes (one 30 s wait for the upstream read timeout). The windows of 10 s (the name lookup, #75-AC1.3 and AC3.3, and
+# the client header and body timeouts, AC3.4) are tested with 12 s: two seconds of tolerance on a loaded machine.
 set -uo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -183,6 +184,10 @@ eq "#75-AC1" "cap_drop ALL" '["ALL"]' "$(svc '.cap_drop' | jq -c .)"
 eq "#75-AC1" "no-new-privileges" '["no-new-privileges:true"]' "$(svc '.security_opt' | jq -c .)"
 check "#75-AC1" "tmpfs for nginx's cache and pid paths" jq -e '.services.edge.tmpfs | (index("/tmp:uid=101,gid=101,mode=1777,size=16m") != null) and (map(startswith("/var/cache/nginx:")) | any)' <<<"$edge_json" >/dev/null
 check "#75-AC1" "the pid file is on the tmpfs, not on a read-only path" grep -q '^pid /tmp/' "$edge_src/nginx.conf"
+# the PO-confirmed values (2026-11-23): the cache tmpfs, the process limit and the health check's retries and start timings
+check "#75-AC1" "tmpfs /var/cache/nginx is 128 MiB" jq -e '.services.edge.tmpfs | index("/var/cache/nginx:uid=101,gid=101,mode=0755,size=128m") != null' <<<"$edge_json" >/dev/null
+eq "#75-AC1" "pids_limit 100" "100" "$(svc .pids_limit)"
+eq "#75-AC1.4" "health check retries 3, start_period 5s, start_interval 1s" "3 5s 1s" "$(svc '.healthcheck | "\(.retries) \(.start_period) \(.start_interval)"')"
 # #75-AC1.4 time: the check's interval 5 s and timeout 3 s
 eq "#75-AC1.4" "healthcheck interval and timeout" "5s 3s" "$(svc '.healthcheck | "\(.interval) \(.timeout)"')"
 # #75-AC1.8 permissions: no Docker socket, no network but elysium-edge

@@ -70,11 +70,7 @@ docker compose up -d --wait
 
 A one-shot `env-check` refuses invalid `.env` values before the services that need the secrets start; `docker compose logs env-check` names the variable. See [Prince's README](Prince/README.md) for what comes up and where.
 
-Prince is reached through the edge proxy, the only thing that publishes a host port (`127.0.0.1` and `[::1]`, port 80). Start it first, then the stack, and open `http://prince.localhost/vue/`:
-
-```bash
-docker compose -f Edge/docker-compose.yml up -d --wait
-```
+Prince is reached through the edge proxy, the only thing that publishes a host port (`127.0.0.1` and `[::1]`, port 80), which the first command above starts before the stack. Open `http://prince.localhost/vue/`.
 
 Next in the Environments plan: separate production and development stacks behind that edge, at `prince.localhost` and `prince.dev.localhost` (and later one hostname per app). The design is in [`Docs/environments-design.md`](Docs/environments-design.md); the edge itself is in [`Edge/`](Edge/README.md).
 
