@@ -548,6 +548,7 @@ start="$(now_ms)"
 get prince.localhost /x
 took=$(($(now_ms) - start))
 eq "#75-AC3.3" "the stopped stack's host answers 502" "502" "$status"
+expect_headers "#75-AC4.3" "security headers on a 502"
 [ "$took" -le 4000 ] && ok || bad "#75-AC3.4" "a stack that does not accept answers within 4 s (took ${took} ms)"
 check "#75-AC3.6" "the 502 holds no other backend's response" bash -c '! grep -q "backend=" <<<"$1"' _ "$body"
 get prince.dev.localhost /x
