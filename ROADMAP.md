@@ -49,7 +49,7 @@ Prince runs as two isolated stacks, production and development, behind one loopb
 - [ ] Bookkeeping scripts: `tools/ticket.sh` (#70), `tools/pr.sh` (#71), `tools/wt.sh` (#72), each with a stubbed-`gh` test harness
 - [x] Proxy resolver fix and nginx upgrade: upstreams re-resolved, images off nginx 1.27 (#73, with #36)
 - [x] Compose health and ordering: restart policies, narrower dependencies, health timings, image-name check (#74)
-- [ ] Edge proxy: `elysium-edge` network, loopback-only bindings, Host routing with a per-environment allow-list (#75)
+- [x] Edge proxy: `elysium-edge` network, loopback-only bindings, Host routing with a per-environment allow-list (#75)
 - [ ] Prod/dev stacks and env files (#76)
 - [ ] Per-app up/down, dev-update and the `elysium.needs` label parser with a no-op reference-count hook (#77)
 - [ ] Runtime baseline and lint (#78)

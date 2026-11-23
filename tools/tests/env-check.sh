@@ -13,7 +13,7 @@ failed=0
 
 # The values of Prince/.env.example, as the starting point of every case
 valid=(
-    POSTGRES_USER=prince POSTGRES_PASSWORD=changeme POSTGRES_DB=prince REVERSE_PROXY_PORT=8080
+    POSTGRES_USER=prince POSTGRES_PASSWORD=changeme POSTGRES_DB=prince
     JOBS_ADMIN_EMAIL=admin@prince.local 'JOBS_ADMIN_PASSWORD=ChangeMe123!'
     FILE_STORAGE_ROOT_USER=prince-admin 'FILE_STORAGE_ROOT_PASSWORD=ChangeMe123!' FILE_STORAGE_BUCKET=product-files
 )
@@ -172,8 +172,12 @@ for variable in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB; do
 done
 passes "Postgres password with other special characters" 'POSTGRES_PASSWORD=a b$`"\*'"'"'='
 
+# REVERSE_PROXY_PORT was removed with the edge proxy (#75): an .env that still sets it is ignored, no error
+passes "a leftover REVERSE_PROXY_PORT is ignored" REVERSE_PROXY_PORT=8080
+passes "a leftover empty REVERSE_PROXY_PORT is ignored" REVERSE_PROXY_PORT=
+
 # The other values only need to be set
-for variable in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB REVERSE_PROXY_PORT JOBS_ADMIN_EMAIL; do
+for variable in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB JOBS_ADMIN_EMAIL; do
     fails "empty $variable" "$variable" "$variable="
     fails "missing $variable" "$variable" "$variable"
 done

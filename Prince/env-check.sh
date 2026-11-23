@@ -30,7 +30,7 @@ min_length() { # variable, minimum
     [ "${#v}" -ge "$2" ] || bad "$1" "must be at least $2 characters"
 }
 
-for name in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB REVERSE_PROXY_PORT JOBS_ADMIN_EMAIL JOBS_ADMIN_PASSWORD \
+for name in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB JOBS_ADMIN_EMAIL JOBS_ADMIN_PASSWORD \
     FILE_STORAGE_ROOT_USER FILE_STORAGE_ROOT_PASSWORD FILE_STORAGE_BUCKET; do
     required "$name"
 done

@@ -1,14 +1,47 @@
-# Stub: the edge proxy is built by the commits after the tests (#75).
+# The edge proxy (#75): the only service of the repository that publishes a host port. It routes by Host to the entry
+# proxy of each stack (`prince-prod-proxy`, `prince-dev-proxy`) over the network `elysium-edge`, which this file
+# creates; the stacks declare it `external: true` and join it with their alias. Start it before any stack.
 name: elysium-edge
+
 services:
   edge:
+    # The same nginx 1.30 (stable) as the stack's proxy, pinned by digest
     image: nginx:1.30-alpine@sha256:3bc3836dc0be3b811f238210360bf8e7ca8a2d0effdae46160bf1f3578710051
+    environment:
+      # UTC timestamps in the access log
+      TZ: UTC
+    # Only the edge publishes, on this machine only: IPv4 and IPv6 loopback, never 0.0.0.0 or [::]. nginx listens on 8080
+    # inside (non-root, above 1024) and Docker publishes it as port 80.
     ports:
       - "127.0.0.1:80:8080"
+      - "[::1]:80:8080"
+    # Compose service names (the stacks' aliases) resolve through Docker's embedded DNS; every other name fails at once
+    dns:
+      - 127.0.0.1
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro,z
     networks:
       - elysium-edge
+    user: "101:101"
+    read_only: true
+    tmpfs:
+      - /tmp:uid=101,gid=101,mode=1777,size=16m
+      - /var/cache/nginx:uid=101,gid=101,mode=0755,size=128m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    # Any HTTP answer counts, a 421 included: the edge must be healthy with no stack running
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -S --spider -T 2 http://127.0.0.1:8080/ 2>&1 | grep -q 'HTTP/'"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+      start_interval: 1s
+    restart: unless-stopped
+
 networks:
   elysium-edge:
     name: elysium-edge

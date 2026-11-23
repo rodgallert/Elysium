@@ -713,11 +713,13 @@ if [ "${EDGE_SMOKE:-0}" = 1 ]; then
     }
     via_edge() { # path
         get prince.localhost "$1"
-        printf '%s %s %s' "$status" "$(header location)" "$(printf '%s' "$body" | sha256sum | cut -c1-16)"
+        printf '%s %s %s' "$status" "$(header location)" "$(sha256sum <"$work/body" | cut -c1-16)"
     }
     for r in /vue/ /vue/checkout/ /react/ /react/checkout/ /api/ /api/checkout/ /jobs/ /admin/ /api/health '/api/health?x=1' /api/%2F /vue /api/checkout/health; do
         d="$(direct "$r")"
         e="$(via_edge "$r")"
+        # a redirect's body is nginx's page, and wget follows the redirect: compare status and Location only
+        case "$d" in 3*) d="${d% *}" e="${e% *}" ;; esac
         eq "#75-AC6" "$r through the edge equals the stack's own answer (status, Location, body)" "$d" "$e"
     done
     get prince.localhost /api/health

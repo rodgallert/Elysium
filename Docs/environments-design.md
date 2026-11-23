@@ -80,6 +80,11 @@ external Docker network `elysium-edge`; stacks publish no host ports of their ow
 - It never joins a data-store network.
 - Its access log never records query strings, `Authorization` or `Cookie`; this rule is specified in
   the edge ticket (#75) and cited here.
+- Details decided with the edge ticket (#75): nginx listens on 8080 inside the container (non-root) and
+  Docker publishes it as host port 80; a `Host` that is not exactly a routed name (case, a trailing dot and
+  `:80` aside) gets `421` with an empty body; request paths are normalised for every service (characters
+  RFC 3986 doesn't allow in a path are percent-encoded); the CSP is report-only until Masquerade's UI has
+  no inline scripts; `Edge/README.md` lists the limits and timeouts.
 
 **Why.** One loopback-only entry point is one place to harden and one place to look. Because it is
 the only shared piece and sees no data store, the blast radius of a bug in it is a refused or

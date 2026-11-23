@@ -32,7 +32,7 @@ failed=0
 password="Zq$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 port="$(for p in $(seq 18200 18400); do (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null || { echo "$p"; break; }; done)"
 env_file="$work/env"
-printf '%s\n' "POSTGRES_USER=prince" "POSTGRES_PASSWORD=$password" "POSTGRES_DB=prince" "REVERSE_PROXY_PORT=$port" \
+printf '%s\n' "POSTGRES_USER=prince" "POSTGRES_PASSWORD=$password" "POSTGRES_DB=prince" "COMPOSE_SMOKE_PROXY_PORT=$port" \
     "JOBS_ADMIN_EMAIL=admin@prince.local" "JOBS_ADMIN_PASSWORD=ChangeMe123!" "FILE_STORAGE_ROOT_USER=prince-admin" \
     "FILE_STORAGE_ROOT_PASSWORD=ChangeMe123!" "FILE_STORAGE_BUCKET=product-files" >"$env_file"
 
