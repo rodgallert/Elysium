@@ -58,3 +58,7 @@ docker compose up --build
 ```
 
 See [Prince's README](Prince/README.md) for what comes up and where. A single root `docker-compose.yml` for the whole ecosystem, with one hostname per app (`accounts.localhost`, `prince.localhost`, `api.localhost`), arrives with Masquerade and Keeper.
+
+## License
+
+Elysium is released under the [MIT License](LICENSE).
