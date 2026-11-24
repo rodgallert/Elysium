@@ -290,6 +290,17 @@ git pull
 docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
 ```
 
+## Repository settings
+
+Some protection lives in repository settings, not in files. `tools/check-repo-settings.sh` reads them from the live API (one `ok:` or `FAIL:` line per setting, exit 1 on any failure, `cannot read` when the API doesn't answer, never `ok`) so "set" is checked, not assumed. It needs an admin token (the owner's, never a switch of gh accounts), so it isn't run in CI; the PO runs it after changing a setting and before a release. These are the values it asserts:
+
+- **Fork pull request workflows:** Settings → Actions → General → "Require approval for all outside collaborators" (`approval_policy` is `all_external_contributors`), so no workflow of an outside contributor runs unapproved, including the first-time-contributor exemptions.
+- **Dependabot:** Dependabot alerts and Dependabot security updates are both enabled (and security updates not paused). Update PRs are never auto-merged.
+- **Rulesets** ("Protect main" and "Release branches"): `gate` is required with source GitHub Actions (`integration_id` 15368, see "Required check"); `required_approving_review_count` is 0, `require_code_owner_review` and `require_last_push_approval` are false; "Protect main" also has `dismiss_stale_reviews_on_push` true.
+- **CODEOWNERS:** `.github/CODEOWNERS` exists, names the PO as owner of `/.github/`, `/tools/`, `/docker-compose.prod.yml` and `/Docs/workflow.md`, and GitHub reports no errors in it. A review by the code owner is **not required**: there is one human, automated steps push as the PO, and an author can't approve their own pull request, so a required approval or code-owner review would deadlock every merge. The file records ownership, and becomes enforceable the day a second maintainer joins.
+
+`REPO_SETTINGS_REF=<branch> tools/check-repo-settings.sh` reads the CODEOWNERS file from a branch, for the run before its merge. Its fixture tests are `tools/tests/repo-settings.sh` (a stubbed `gh`; they call no API).
+
 ## Hotfixes
 
 An urgent fix to a released version:

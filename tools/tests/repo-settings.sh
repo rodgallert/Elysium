@@ -103,7 +103,6 @@ t_ac1_happy() {
     new_world; run_check
     rc_is "#82-AC1 all settings right" 0
     has "#82-AC1 one ok line" "ok: fork-approval"
-    has "#82-AC1 reads the endpoint" "api"
     called "#82-AC1 reads the approval endpoint" "actions/permissions/fork-pr-contributor-approval"
 }
 t_ac1_today() { # the settings as they are on 2026-11-24
