@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016,SC2181  # fixtures hold literal ${{ }} expressions; $? is read right after the command it judges
 # Fixture tests for tools/ci-gate.sh and tools/ci-release-run.sh. Everything happens in a temporary directory.
 # Usage: tools/tests/ci-tools.sh
 set -uo pipefail
@@ -41,56 +42,56 @@ gate() { # name, expected exit code, event, ref, needs JSON
     check "gate: $1" "$2" "$rc" "$out"
 }
 
-all_ok=(changes=success boundaries=success dotnet=success release-checks=success find-frontends=success
+all_ok=(changes=success boundaries=success dotnet=success release-checks=success action-pins=success find-frontends=success
     frontends=success find-images=success publish=skipped)
 APPS='["Prince/Frontend/web"]'
 IMAGES='[{"image":"x"}]'
 
 gate "code PR, everything green" 0 pull_request refs/pull/1/merge "$(needs true "$APPS" "$IMAGES" "${all_ok[@]}")"
 gate "Markdown-only PR, only changes ran" 0 pull_request refs/pull/1/merge "$(needs false '' '' \
-    changes=success boundaries=skipped dotnet=skipped release-checks=skipped find-frontends=skipped frontends=skipped \
+    changes=success boundaries=skipped dotnet=skipped release-checks=skipped action-pins=skipped find-frontends=skipped frontends=skipped \
     find-images=skipped publish=skipped)"
 gate "dotnet failed" 1 pull_request refs/pull/1/merge "$(needs true "$APPS" "$IMAGES" \
-    changes=success boundaries=success dotnet=failure release-checks=success find-frontends=success frontends=success \
+    changes=success boundaries=success dotnet=failure release-checks=success action-pins=success find-frontends=success frontends=success \
     find-images=success publish=skipped)"
 gate "frontends failed" 1 pull_request refs/pull/1/merge "$(needs true "$APPS" "$IMAGES" \
-    changes=success boundaries=success dotnet=success release-checks=success find-frontends=success frontends=failure \
+    changes=success boundaries=success dotnet=success release-checks=success action-pins=success find-frontends=success frontends=failure \
     find-images=success publish=skipped)"
 gate "a job was cancelled" 1 pull_request refs/pull/1/merge "$(needs true "$APPS" "$IMAGES" \
-    changes=success boundaries=success dotnet=cancelled release-checks=success find-frontends=success frontends=success \
+    changes=success boundaries=success dotnet=cancelled release-checks=success action-pins=success find-frontends=success frontends=success \
     find-images=success publish=skipped)"
 gate "release-checks skipped by mistake" 1 pull_request refs/pull/1/merge "$(needs true "$APPS" "$IMAGES" \
-    changes=success boundaries=success dotnet=success release-checks=skipped find-frontends=success frontends=success \
+    changes=success boundaries=success dotnet=success release-checks=skipped action-pins=success find-frontends=success frontends=success \
     find-images=success publish=skipped)"
 gate "no apps: frontends skipped is fine" 0 pull_request refs/pull/1/merge "$(needs true '[]' "$IMAGES" \
-    changes=success boundaries=success dotnet=success release-checks=success find-frontends=success frontends=skipped \
+    changes=success boundaries=success dotnet=success release-checks=success action-pins=success find-frontends=success frontends=skipped \
     find-images=success publish=skipped)"
 gate "apps exist but frontends skipped" 1 pull_request refs/pull/1/merge "$(needs true "$APPS" "$IMAGES" \
-    changes=success boundaries=success dotnet=success release-checks=success find-frontends=success frontends=skipped \
+    changes=success boundaries=success dotnet=success release-checks=success action-pins=success find-frontends=success frontends=skipped \
     find-images=success publish=skipped)"
 gate "push to main: publish succeeded" 0 push refs/heads/main "$(needs true "$APPS" "$IMAGES" \
-    changes=success boundaries=success dotnet=success release-checks=success find-frontends=success frontends=success \
+    changes=success boundaries=success dotnet=success release-checks=success action-pins=success find-frontends=success frontends=success \
     find-images=success publish=success)"
 gate "push to main: publish failed" 1 push refs/heads/main "$(needs true "$APPS" "$IMAGES" \
-    changes=success boundaries=success dotnet=success release-checks=success find-frontends=success frontends=success \
+    changes=success boundaries=success dotnet=success release-checks=success action-pins=success find-frontends=success frontends=success \
     find-images=success publish=failure)"
 gate "push to main: publish skipped by mistake" 1 push refs/heads/main "$(needs true "$APPS" "$IMAGES" \
-    changes=success boundaries=success dotnet=success release-checks=success find-frontends=success frontends=success \
+    changes=success boundaries=success dotnet=success release-checks=success action-pins=success find-frontends=success frontends=success \
     find-images=success publish=skipped)"
 gate "push to main with no images: publish skipped" 0 push refs/heads/main "$(needs true "$APPS" '[]' \
-    changes=success boundaries=success dotnet=success release-checks=success find-frontends=success frontends=success \
+    changes=success boundaries=success dotnet=success release-checks=success action-pins=success find-frontends=success frontends=success \
     find-images=success publish=skipped)"
 gate "push to a release branch: publish skipped" 0 push refs/heads/release/prince-0.1 "$(needs true "$APPS" "$IMAGES" \
-    changes=success boundaries=success dotnet=success release-checks=success find-frontends=success frontends=success \
+    changes=success boundaries=success dotnet=success release-checks=success action-pins=success find-frontends=success frontends=success \
     find-images=success publish=skipped)"
 gate "publish ran where it must not" 1 pull_request refs/pull/1/merge "$(needs true "$APPS" "$IMAGES" \
-    changes=success boundaries=success dotnet=success release-checks=success find-frontends=success frontends=success \
+    changes=success boundaries=success dotnet=success release-checks=success action-pins=success find-frontends=success frontends=success \
     find-images=success publish=success)"
 gate "changes failed" 1 pull_request refs/pull/1/merge "$(needs true "$APPS" "$IMAGES" \
-    changes=failure boundaries=skipped dotnet=skipped release-checks=skipped find-frontends=skipped frontends=skipped \
+    changes=failure boundaries=skipped dotnet=skipped release-checks=skipped action-pins=skipped find-frontends=skipped frontends=skipped \
     find-images=skipped publish=skipped)"
 gate "Markdown-only but dotnet ran" 1 pull_request refs/pull/1/merge "$(needs false '' '' \
-    changes=success boundaries=skipped dotnet=success release-checks=skipped find-frontends=skipped frontends=skipped \
+    changes=success boundaries=skipped dotnet=success release-checks=skipped action-pins=skipped find-frontends=skipped frontends=skipped \
     find-images=skipped publish=skipped)"
 gate "a needed job is missing from needs" 1 pull_request refs/pull/1/merge "$(needs true "$APPS" "$IMAGES" \
     changes=success boundaries=success dotnet=success find-frontends=success frontends=success find-images=success \
@@ -98,6 +99,19 @@ gate "a needed job is missing from needs" 1 pull_request refs/pull/1/merge "$(ne
 gate "a job nobody told the gate about" 1 pull_request refs/pull/1/merge "$(needs true "$APPS" "$IMAGES" \
     "${all_ok[@]}" newjob=success)"
 gate "changes gave no verdict" 1 pull_request refs/pull/1/merge "$(needs maybe "$APPS" "$IMAGES" "${all_ok[@]}")"
+# #83-AC2, #83-AC2.3 and #83-AC2.6: the action-pins job is held to the same rules as the other build jobs
+gate "#83-AC2 action-pins failed" 1 pull_request refs/pull/1/merge "$(needs true "$APPS" "$IMAGES" \
+    "${all_ok[@]/action-pins=success/action-pins=failure}")"
+gate "#83-AC2.6 action-pins crashed (cancelled)" 1 pull_request refs/pull/1/merge "$(needs true "$APPS" "$IMAGES" \
+    "${all_ok[@]/action-pins=success/action-pins=cancelled}")"
+gate "#83-AC2 action-pins skipped by mistake" 1 pull_request refs/pull/1/merge "$(needs true "$APPS" "$IMAGES" \
+    "${all_ok[@]/action-pins=success/action-pins=skipped}")"
+gate "#83-AC2.3 action-pins ran on a Markdown-only change" 1 pull_request refs/pull/1/merge "$(needs false '' '' \
+    changes=success boundaries=skipped dotnet=skipped release-checks=skipped action-pins=success find-frontends=skipped \
+    frontends=skipped find-images=skipped publish=skipped)"
+gate "#83-AC2 action-pins missing from needs" 1 push refs/heads/main "$(needs true "$APPS" "$IMAGES" \
+    changes=success boundaries=success dotnet=success release-checks=success find-frontends=success frontends=success \
+    find-images=success publish=success)"
 
 # --- Markdown-only changes ------------------------------------------------------------------------------------------
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_CEILING_DIRECTORIES="$work"
@@ -196,6 +210,329 @@ release_run "one green run, another still going" 1 "1=$(printf '[{"databaseId":1
 
 out="$("$root/tools/ci-release-run.sh" 'not-a-commit' 2>&1)"
 check "release run: refuses a value that is not a commit" 2 $? "$out"
+
+# --- pinned actions, default permissions, runner labels (#83) -------------------------------------------------------------
+# The checks are POSIX sh scripts: CI runs them under dash (/bin/sh on Ubuntu), so every case runs under bash and, when
+# it is installed, dash. Fixtures are written into the temporary directory; the scripts never touch the network.
+pins="$root/tools/check-action-pins.sh"
+perms="$root/tools/check-workflow-permissions.sh"
+shells=(bash)
+if command -v dash >/dev/null 2>&1; then
+    shells+=(dash)
+elif [ -n "${CI:-}" ]; then
+    failed=$((failed + 1))
+    echo "FAIL: #83-AC1.9 dash is not installed, so the checks cannot be run under the CI shell"
+else
+    echo "SKIP: dash is not installed; the #83 checks run under bash only here (CI runs them under dash)"
+fi
+
+nroot=0
+newroot() { # sets R to a fresh fixture root with .github/workflows
+    nroot=$((nroot + 1))
+    R="$work/pins/$nroot"
+    mkdir -p "$R/.github/workflows"
+}
+case_run() { # id, name, script, root, expected exit code, expected output (exactly), extra arguments
+    local sh out rc id="$1" name="$2" script="$3" dir="$4" want="$5" wantout="$6"
+    shift 6
+    for sh in "${shells[@]}"; do
+        out="$("$sh" "$script" "$@" "$dir" 2>&1)"
+        rc=$?
+        if [ "$rc" = "$want" ] && [ "$out" = "$wantout" ]; then
+            pass=$((pass + 1))
+        else
+            failed=$((failed + 1))
+            echo "FAIL: $id $name [$sh] (expected exit $want, got $rc)"
+            printf '%s\n' "    wanted: ${wantout//$'\n'/$'\n            '}" "    got:    ${out//$'\n'/$'\n            '}"
+        fi
+    done
+}
+require() { # id, name, 0 when the condition holds
+    if [ "$3" = 0 ]; then pass=$((pass + 1)); else
+        failed=$((failed + 1))
+        echo "FAIL: $1 $2"
+        [ -n "${4:-}" ] && printf '%s\n' "    ${4//$'\n'/$'\n    '}"
+    fi
+}
+
+W=.github/workflows/w.yml
+HDR=$'name: t\non: push\npermissions: {}\njobs:\n  j:\n    runs-on: ubuntu-24.04\n    permissions: {}\n    steps:'
+s40=11d5960a326750d5838078e36cf38b85af677262
+s39="${s40%?}"
+s41="${s40}0"
+s7="${s40:0:7}"
+sU="${s40^^}"
+sv="v${s40:0:39}"
+d64="sha256:$(printf '0123456789abcdef%.0s' 1 2 3 4)"
+
+pin_case() { # id, name, expected exit code, the workflow's step lines (line 9 is the first), expected output
+    newroot
+    printf '%s\n%s\n' "$HDR" "$4" >"$R/$W"
+    case_run "$1" "$2" "$pins" "$R" "$3" "$5"
+}
+pin_ok() { pin_case "$1" "$2" 0 "$3" ''; }
+pin_bad() { # id, name, step lines, the ref as it is printed
+    pin_case "$1" "$2" 1 "$3" "$W:9: $4"
+}
+
+# #83-AC1.1 inputs: one case per value
+pin_ok "#83-AC1.1" "a full SHA with a version comment" "      - uses: actions/checkout@$s40 # v4.4.0"
+pin_ok "#83-AC1.1" "a SHA with the release tag it came from" "      - uses: docker/build-push-action@$s40 # v7.4.0"
+pin_ok "#83-AC1.1" "an action in a sub-path" "      - uses: github/codeql-action/analyze@$s40 # v3.28.1"
+pin_ok "#83-AC1.1" "a local action" "      - uses: ./.github/actions/release-image"
+pin_ok "#83-AC1.1" "a uses key after a name key" $'      - name: Checkout\n        uses: actions/checkout@'"$s40 # v4.4.0"
+pin_ok "#83-AC1.1" "a commented-out uses is not a uses" "      # - uses: actions/checkout@v4"
+pin_bad "#83-AC1.1" "@v4" "      - uses: actions/checkout@v4" "actions/checkout@v4"
+pin_bad "#83-AC1.1" "@v4.4.0" "      - uses: actions/checkout@v4.4.0" "actions/checkout@v4.4.0"
+pin_bad "#83-AC1.1" "@main" "      - uses: actions/checkout@main" "actions/checkout@main"
+pin_bad "#83-AC1.1" "a short SHA (7)" "      - uses: actions/checkout@$s7 # v4.4.0" "actions/checkout@$s7"
+pin_bad "#83-AC1.1" "an uppercase SHA" "      - uses: actions/checkout@$sU # v4.4.0" "actions/checkout@$sU"
+pin_bad "#83-AC1.1" "a 41-character hex" "      - uses: actions/checkout@$s41 # v4.4.0" "actions/checkout@$s41"
+pin_bad "#83-AC1.1" "40 characters that are not all hex" "      - uses: actions/checkout@$sv # v4.4.0" "actions/checkout@$sv"
+pin_bad "#83-AC1.1" "a docker:// tag" "      - uses: docker://alpine:3.22" "docker://alpine:3.22"
+pin_bad "#83-AC1.1" "a docker:// digest" "      - uses: docker://alpine@$d64" "docker://alpine@$d64"
+pin_bad "#83-AC1.1" "a missing version comment" "      - uses: actions/checkout@$s40" "actions/checkout@$s40"
+pin_bad "#83-AC1.1" "a comment that is not a version" "      - uses: actions/checkout@$s40 # latest" "actions/checkout@$s40"
+pin_bad "#83-AC1.1" "a major-only comment" "      - uses: actions/checkout@$s40 # v4" "actions/checkout@$s40"
+pin_bad "#83-AC1.1" "an expression instead of a ref" '      - uses: ${{ matrix.action }}' '${{ matrix.action }}'
+pin_bad "#83-AC1.1" "a double-quoted value" "      - uses: \"actions/checkout@$s40\" # v4.4.0" "\"actions/checkout@$s40\""
+pin_bad "#83-AC1.1" "a single-quoted value" "      - uses: 'actions/checkout@$s40' # v4.4.0" "'actions/checkout@$s40'"
+pin_bad "#83-AC1.1" "a | block" $'      - uses: |\n          actions/checkout@'"$s40 # v4.4.0" "|"
+pin_bad "#83-AC1.1" "a > block" $'      - uses: >\n          actions/checkout@'"$s40 # v4.4.0" ">"
+pin_bad "#83-AC1.1" "the value on the next line" $'      - uses:\n          actions/checkout@'"$s40 # v4.4.0" "<empty>"
+pin_bad "#83-AC1.1" "an owner without a repository" "      - uses: checkout@$s40 # v4.4.0" "checkout@$s40"
+pin_bad "#83-AC1.1" "a uses key after a name key, unpinned" $'      - name: Checkout\n        uses: actions/checkout@v4' "actions/checkout@v4"
+# the line printed is the one with the problem, wherever it is
+newroot
+printf '%s\n%s\n' "$HDR" $'      - uses: actions/checkout@'"$s40"$' # v4.4.0\n      - run: echo hi\n      - uses: actions/setup-node@v4\n      - uses: actions/cache@main' >"$R/$W"
+case_run "#83-AC1.1" "every offender of a file is listed, in line order" "$pins" "$R" 1 "$W:11: actions/setup-node@v4
+$W:12: actions/cache@main"
+# files other than workflows/*.yml: composite actions at any depth, .yaml files
+newroot
+mkdir -p "$R/.github/actions/x" "$R/.github/actions/a/b"
+printf 'name: x\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@v4\n' >"$R/.github/actions/x/action.yml"
+printf 'name: y\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@%s # v4.4.0\n    - uses: docker://alpine:3.22\n' "$s40" >"$R/.github/actions/a/b/action.yml"
+printf 'on: push\njobs:\n  j:\n    steps:\n      - uses: actions/cache@v4\n' >"$R/.github/workflows/z.yaml"
+case_run "#83-AC1.1" "composite actions and .yaml workflows are checked too" "$pins" "$R" 1 ".github/actions/a/b/action.yml:6: docker://alpine:3.22
+.github/actions/x/action.yml:5: actions/checkout@v4
+.github/workflows/z.yaml:5: actions/cache@v4"
+
+# #83-AC1.2 boundaries
+newroot
+printf 'name: t\non: push\njobs:\n  j:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n' >"$R/$W"
+case_run "#83-AC1.2" "a workflow with no uses passes" "$pins" "$R" 0 ''
+newroot
+case_run "#83-AC1.2" "a repository with no workflows passes" "$pins" "$R" 0 ''
+newroot
+rmdir "$R/.github/workflows" "$R/.github"
+case_run "#83-AC1.2" "a repository with no .github folder passes" "$pins" "$R" 0 ''
+pin_ok "#83-AC1.2" "exactly 40 hex" "      - uses: actions/checkout@$s40 # v4.4.0"
+pin_bad "#83-AC1.2" "39 hex" "      - uses: actions/checkout@$s39 # v4.4.0" "actions/checkout@$s39"
+pin_bad "#83-AC1.2" "41 hex" "      - uses: actions/checkout@$s41 # v4.4.0" "actions/checkout@$s41"
+case_run "#83-AC1.2" "a root that is not a directory is a usage error" "$pins" "$work/pins/none" 2 \
+    "check-action-pins.sh: $work/pins/none is not a directory"
+
+# #83-AC1.6: the check reads files and nothing else; its header says so
+head -25 "$pins" | grep -qi 'network'
+require "#83-AC1.6" "the header says the check does not use the network (a deleted SHA is found by GitHub)" $?
+head -25 "$pins" | grep -qi 'delet'
+require "#83-AC1.6" "the header says a deleted upstream SHA cannot be detected offline" $?
+grep -nE '\b(curl|wget|gh|git|nc)[[:space:]]' "$pins" | grep -v '^[0-9]*:[[:space:]]*#' >/dev/null
+require "#83-AC1.6" "the script calls no network or git tool" "$([ $? -ne 0 ] && echo 0 || echo 1)"
+
+# #83-AC1.7 idempotence: the check changes nothing and gives the same output every time
+newroot
+printf '%s\n%s\n' "$HDR" "      - uses: actions/checkout@v4" >"$R/$W"
+before="$(cksum <"$R/$W")"
+first="$(bash "$pins" "$R" 2>&1)"
+second="$(bash "$pins" "$R" 2>&1)"
+require "#83-AC1.7" "two runs print the same, and the file is untouched" "$([ "$first" = "$second" ] && [ "$before" = "$(cksum <"$R/$W")" ] && [ -n "$first" ] && echo 0 || echo 1)"
+
+# #83-AC1.9 environment: a /bin/sh script with no [[, here-string, process substitution or grep -P (dash runs every case above)
+for script in "$pins" "$perms"; do
+    name="$(basename "$script")"
+    require "#83-AC1.9" "$name starts with #!/bin/sh" "$([ "$(head -1 "$script")" = '#!/bin/sh' ] && echo 0 || echo 1)"
+    grep -nE '\[\[|grep[[:space:]]+(-[a-zA-Z]*P|--perl)|<<<|<\(' "$script" >/dev/null
+    require "#83-AC1.9" "$name has no bashism and no grep -P" "$([ $? -ne 0 ] && echo 0 || echo 1)"
+done
+
+# #83-AC1.10 observability: only offenders are printed, and no value of a workflow reaches the output
+newroot
+printf '%s\n' "$HDR" '      - uses: actions/checkout@v4' '        with:' '          token: ${{ secrets.TOP_SECRET_NAME }}' \
+    '      - run: echo "$SOME_VALUE_abc123"' >"$R/$W"
+case_run "#83-AC1.10" "only <file>:<line>: <ref> is printed, nothing from the rest of the file" "$pins" "$R" 1 \
+    "$W:9: actions/checkout@v4"
+case_run "#83-AC1.10" "a clean tree prints nothing" "$pins" "$root" 0 ''
+
+# #83-AC4 runner labels (checked by the same script; offenders as <file>:<line>: <value>)
+runner_case() { # id, name, expected exit code, the runs-on lines, expected output
+    newroot
+    printf 'name: t\non: push\npermissions: {}\njobs:\n  j:\n%s\n    permissions: {}\n    steps:\n      - run: echo hi\n' "$4" >"$R/$W"
+    case_run "$1" "$2" "$pins" "$R" "$3" "$5"
+}
+runner_case "#83-AC4" "ubuntu-24.04 is the one allowed label" 0 "    runs-on: ubuntu-24.04" ''
+runner_case "#83-AC4" "ubuntu-24.04 with a trailing comment" 0 "    runs-on: ubuntu-24.04 # pinned" ''
+runner_case "#83-AC4.1" "ubuntu-latest" 1 "    runs-on: ubuntu-latest" "$W:6: ubuntu-latest"
+runner_case "#83-AC4.1" "ubuntu-22.04" 1 "    runs-on: ubuntu-22.04" "$W:6: ubuntu-22.04"
+runner_case "#83-AC4.1" "macos-latest" 1 "    runs-on: macos-latest" "$W:6: macos-latest"
+runner_case "#83-AC4.1" "a matrix expression" 1 '    runs-on: ${{ matrix.os }}' "$W:6: "'${{ matrix.os }}'
+runner_case "#83-AC4.1" "a flow list" 1 "    runs-on: [ubuntu-24.04]" "$W:6: [ubuntu-24.04]"
+runner_case "#83-AC4.1" "a block list" 1 $'    runs-on:\n      - ubuntu-24.04' "$W:6: <empty>"
+runner_case "#83-AC4.1" "an arm runner" 1 "    runs-on: ubuntu-24.04-arm" "$W:6: ubuntu-24.04-arm"
+runner_case "#83-AC4.1" "a quoted label" 1 "    runs-on: 'ubuntu-24.04'" "$W:6: 'ubuntu-24.04'"
+runner_case "#83-AC4.10" "every offender of a file is listed" 1 $'    runs-on: ubuntu-latest\n  k:\n    runs-on: macos-latest' \
+    "$W:6: ubuntu-latest
+$W:8: macos-latest"
+runs_on_count="$(grep -h '^ *runs-on:' "$root"/.github/workflows/*.yml | wc -l)"
+runs_on_ok="$(grep -h '^ *runs-on: ubuntu-24.04$' "$root"/.github/workflows/*.yml | wc -l)"
+require "#83-AC4" "every runs-on in the repository's workflows is ubuntu-24.04" "$([ "$runs_on_count" -gt 0 ] && [ "$runs_on_count" = "$runs_on_ok" ] && echo 0 || echo 1)" \
+    "$runs_on_ok of $runs_on_count"
+
+# #83-AC3 permissions: top level {}, a block on every job
+perm_case() { # id, name, expected exit code, expected output, the workflow text
+    newroot
+    printf '%s\n' "$5" >"$R/$W"
+    case_run "$1" "$2" "$perms" "$R" "$3" "$4"
+}
+GOOD=$'name: t\non: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions:\n      contents: read\n    steps:\n      - run: echo hi\n  b:\n    runs-on: ubuntu-24.04\n    permissions: {}\n    steps:\n      - run: echo hi'
+perm_case "#83-AC3" "top level {} and a block on every job" 0 '' "$GOOD"
+perm_case "#83-AC3.1" "a job-level permissions: {}" 0 '' $'name: t\non: push\npermissions: {}   # nothing by default\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: {}\n    steps:\n      - run: echo hi'
+perm_case "#83-AC3.1" "permissions after jobs still counts" 0 '' $'on: push\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: {}\n    steps:\n      - run: echo hi\npermissions: {}'
+perm_case "#83-AC3.1" "top level write-all" 1 "$W: top level: permissions must be {} (found: write-all)" "${GOOD/permissions: \{\}/permissions: write-all}"
+perm_case "#83-AC3.1" "top level read-all" 1 "$W: top level: permissions must be {} (found: read-all)" "${GOOD/permissions: \{\}/permissions: read-all}"
+perm_case "#83-AC3.1" "top level contents: read" 1 "$W: top level: permissions must be {} (found: a block)" "${GOOD/permissions: \{\}/permissions:
+  contents: read}"
+perm_case "#83-AC3.1" "top level key missing" 1 "$W: top level: permissions must be {} (found: no permissions key)" "${GOOD/permissions: \{\}
+/}"
+perm_case "#83-AC3.1" "a job without a block" 1 "$W: job b: no permissions block" $'name: t\non: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions:\n      contents: read\n    steps:\n      - run: echo hi\n  b:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi'
+perm_case "#83-AC3.1" "every offending job is named, and the top level too" 1 "$W: top level: permissions must be {} (found: no permissions key)
+$W: job a: no permissions block
+$W: job b: no permissions block" $'on: push\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n  b:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi'
+perm_case "#83-AC3.1" "a job with write-all" 1 "$W: job a: permissions: write-all is not allowed" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: write-all\n    steps:\n      - run: echo hi'
+perm_case "#83-AC3.1" "a permissions key of a step input is not the job's block" 1 "$W: job a: no permissions block" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: ./x\n        with:\n          permissions: contents: read'
+perm_case "#83-AC3.1" "a permissions key only inside a job is not the top level" 1 "$W: top level: permissions must be {} (found: no permissions key)" $'on: push\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: {}\n    steps:\n      - run: echo hi'
+perm_case "#83-AC3.2" "a single job with its block" 0 '' $'on: push\npermissions: {}\njobs:\n  only:\n    runs-on: ubuntu-24.04\n    permissions:\n      contents: read\n    steps:\n      - run: echo hi'
+perm_case "#83-AC3.2" "a single job without a block" 1 "$W: job only: no permissions block" $'on: push\npermissions: {}\njobs:\n  only:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi'
+newroot
+printf 'on: push\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n' >"$R/$W"
+before="$(cksum <"$R/$W")"
+first="$(bash "$perms" "$R" 2>&1)"
+second="$(bash "$perms" "$R" 2>&1)"
+require "#83-AC3.7" "two runs print the same, and the file is untouched" "$([ "$first" = "$second" ] && [ "$before" = "$(cksum <"$R/$W")" ] && [ -n "$first" ] && echo 0 || echo 1)"
+case_run "#83-AC3" "the repository's own workflows pass" "$perms" "$root" 0 ''
+newroot
+case_run "#83-AC3.2" "a repository with no workflows passes" "$perms" "$R" 0 ''
+
+# #83-AC3.8: no job gains a permission. --list prints each job's grants; the table is what the workflows granted
+# before #83 (a job without a block inherited the workflow's contents: read), plus the one new job
+before_grants=(
+    ".github/workflows/build.yml: job changes: contents:read"
+    ".github/workflows/build.yml: job boundaries: contents:read"
+    ".github/workflows/build.yml: job dotnet: contents:read"
+    ".github/workflows/build.yml: job release-checks: attestations:read contents:read"
+    ".github/workflows/build.yml: job find-frontends: contents:read"
+    ".github/workflows/build.yml: job frontends: contents:read"
+    ".github/workflows/build.yml: job find-images: contents:read"
+    ".github/workflows/build.yml: job publish: attestations:write contents:read id-token:write packages:write"
+    ".github/workflows/build.yml: job gate: actions:read contents:read"
+    ".github/workflows/release.yml: job plan: contents:read"
+    ".github/workflows/release.yml: job dry-run-pr: contents:read"
+    ".github/workflows/release.yml: job dry-run: attestations:write contents:read id-token:write"
+    ".github/workflows/release.yml: job dry-run-summary: contents:read"
+    ".github/workflows/release.yml: job prepare: attestations:write contents:read id-token:write packages:write"
+    ".github/workflows/release.yml: job prepare-pin: actions:write contents:write"
+    ".github/workflows/release.yml: job release: attestations:read contents:write packages:write"
+)
+after_list="$(bash "$perms" --list "$root" 2>&1)"
+extra=""
+gone=""
+while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    key="${line%: *}"
+    grants=" ${line##*: } "
+    found=""
+    for b in "${before_grants[@]}"; do
+        [ "${b%: *}" = "$key" ] && found="$b"
+    done
+    if [ -z "$found" ]; then
+        [ "$line" = ".github/workflows/build.yml: job action-pins: contents:read" ] || extra="$extra$line"$'\n'
+        continue
+    fi
+    for g in ${grants}; do
+        case " ${found##*: } " in
+            *" $g "*) ;;
+            *) extra="$extra$key gained $g"$'\n' ;;
+        esac
+    done
+done <<<"$after_list"
+for b in "${before_grants[@]}"; do
+    case $'\n'"$after_list"$'\n' in
+        *$'\n'"${b%: *}: "*) ;;
+        *) gone="$gone${b%: *}"$'\n' ;;
+    esac
+done
+require "#83-AC3.8" "no job gains a permission, and no job is missing from the list" "$([ -z "$extra" ] && [ -z "$gone" ] && echo 0 || echo 1)" \
+    "gained: $extra missing: $gone"
+require "#83-AC3.8" "the new action-pins job reads contents and nothing else" \
+    "$(grep -qxF '.github/workflows/build.yml: job action-pins: contents:read' <<<"$after_list" && echo 0 || echo 1)" "$after_list"
+newroot
+printf '%s\n' $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions:\n      id-token: write # signs\n      contents: read\n    steps:\n      - run: echo hi\n  b:\n    runs-on: ubuntu-24.04\n    permissions: { packages: write, contents: read }\n    steps:\n      - run: echo hi\n  c:\n    runs-on: ubuntu-24.04\n    permissions: {}\n    steps:\n      - run: echo hi' >"$R/$W"
+case_run "#83-AC3.8" "--list sorts each job's grants, reads flow form, drops comments, says none" "$perms" "$R" 0 \
+    "$W: job a: contents:read id-token:write
+$W: job b: contents:read packages:write
+$W: job c: none" --list
+# #113: checks: write (what could forge the gate's own status) is granted nowhere
+grep -nE '^[[:space:]]*(checks|statuses):[[:space:]]*write' "$root"/.github/workflows/*.yml >/dev/null
+require "#83-AC3.8" "no workflow grants checks: write or statuses: write" "$([ $? -ne 0 ] && echo 0 || echo 1)"
+
+# #83-AC2: the action-pins job in build.yml
+block() { # file, job: the job's lines (from its key to the next job)
+    awk -v j="$2" '$0 == "  " j ":" {on=1; print; next} on && /^  [a-zA-Z0-9_-]+:/ {on=0} on {print}' "$1"
+}
+ap="$(block "$root/.github/workflows/build.yml" action-pins)"
+require "#83-AC2" "build.yml has an action-pins job" "$([ -n "$ap" ] && echo 0 || echo 1)"
+grep -qE '^    needs: changes$' <<<"$ap"
+require "#83-AC2.2" "action-pins needs the changes job" $?
+grep -qF "if: needs.changes.outputs.code == 'true'" <<<"$ap"
+require "#83-AC2.3" "action-pins is skipped by the same Markdown-only rule as the other build jobs" $?
+grep -q 'tools/check-action-pins.sh' <<<"$ap" && grep -q 'tools/check-workflow-permissions.sh' <<<"$ap"
+require "#83-AC2" "action-pins runs both checks" $?
+grep -qE '^    runs-on: ubuntu-24.04$' <<<"$ap"
+require "#83-AC2.9" "action-pins runs on ubuntu-24.04" $?
+grep -qE '^      - uses: actions/checkout@[0-9a-f]{40} # v' <<<"$ap" && grep -q 'persist-credentials: false' <<<"$ap"
+require "#83-AC2.8" "action-pins checks out without keeping the token" $?
+grep -qE '^    needs: \[.*\baction-pins\b.*\]$' <<<"$(block "$root/.github/workflows/build.yml" gate)"
+require "#83-AC2" "gate lists action-pins in needs" $?
+grep -qE '^name: gate$|^  gate:$' "$root/.github/workflows/build.yml" && ! grep -qE '^    name:' <<<"$(block "$root/.github/workflows/build.yml" gate)"
+require "#83-AC2" "the gate job keeps its key and has no name: that renames the required check" $?
+
+# #83-AC5 dependabot.yml and the documentation
+yaml_json() { # file: the file as JSON, with yq (the runner image has it) or its container; empty when neither exists
+    if command -v yq >/dev/null 2>&1; then
+        yq -o=json . "$1" 2>/dev/null
+    elif command -v docker >/dev/null 2>&1; then
+        docker run --rm -i mikefarah/yq -o=json . <"$1" 2>/dev/null
+    fi
+}
+dep="$root/.github/dependabot.yml"
+depjson=""
+[ -f "$dep" ] && depjson="$(yaml_json "$dep")"
+dep_is() { # id, name, jq filter that must be true
+    require "$1" "$2" "$(jq -e "$3" <<<"${depjson:-null}" >/dev/null 2>&1 && echo 0 || echo 1)" "${depjson:-no .github/dependabot.yml, or no yq to read it}"
+}
+dep_is "#83-AC5" "dependabot.yml is version 2 with exactly one update entry" '.version == 2 and (.updates | length) == 1'
+dep_is "#83-AC5" "the entry is the github-actions ecosystem at /" '.updates[0]["package-ecosystem"] == "github-actions" and .updates[0].directory == "/"'
+dep_is "#83-AC5" "the schedule is weekly" '.updates[0].schedule.interval == "weekly"'
+dep_is "#83-AC5" "one group takes every action update" '(.updates[0].groups | length) == 1 and ((.updates[0].groups | to_entries[0].value.patterns) == ["*"])'
+dep_is "#83-AC5" "the cooldown is 14 days" '.updates[0].cooldown["default-days"] == 14'
+dep_is "#83-AC5" "at most 5 open pull requests" '.updates[0]["open-pull-requests-limit"] == 5'
+doc="$root/Docs/workflow.md"
+for phrase in 'tools/check-action-pins.sh' 'tools/check-workflow-permissions.sh' 'permissions: {}' 'ubuntu-24.04' \
+    'full-length commit SHA' '.github/dependabot.yml' 'action-pins' 'by hand'; do
+    require "#83-AC5" "Docs/workflow.md states: $phrase" "$(grep -qF -- "$phrase" "$doc" && echo 0 || echo 1)"
+done
+require "#83-AC4.4" "Docs/workflow.md says where the runner image's retirement is tracked" \
+    "$(grep -qiE 'retire|deprecat' "$doc" && grep -q 'actions/runner-images' "$doc" && echo 0 || echo 1)"
 
 echo "ci tools: $pass passed, $failed failed"
 [ "$failed" -eq 0 ]
