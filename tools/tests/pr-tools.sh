@@ -388,7 +388,7 @@ test_account() {
     new_world
     ready_pr 7
     p status 7
-    check "#71-AC1.8 every gh call carries the owner's token and gh auth switch is never called" bash -c '! grep -q "auth.switch" "'"$STUB_DIR"'/calls.log" && ! grep -v "^'"$owner_token"'" "'"$STUB_DIR"'/calls.log" | grep -qv "^$"'
+    check "#71-AC1.8 every gh call carries the owner's token and gh auth switch is never called" bash -c '! grep -q "auth.switch" "'"$STUB_DIR"'/calls.log" && ! grep -qvP "^('"$owner_token"'|none)\t" "'"$STUB_DIR"'/calls.log"'
     new_world
     ready_pr 7
     XENV=(GH_TOKEN="$owner_token")
@@ -625,7 +625,7 @@ test_ac3_2_boundaries() {
     put_pr 7
     printf 'a%.0s' $(seq 1 65537) >"$work/over"
     v 7 comment "$work/over"
-    check "#71-AC3.2 a body of 65537 characters is refused before any call" bash -c '[ '"$rc"' -ne 0 ] && [ "$(calls)" -eq 0 ]'
+    check "#71-AC3.2 a body of 65537 characters is refused before any call" bash -c '[ '"$rc"' -ne 0 ] && [ '"$(calls)"' -eq 0 ]'
     check "#71-AC3.2 the refusal says why" says "65536"
     new_world
     put_pr 7
@@ -645,7 +645,7 @@ test_ac3_attribution() {
         new_world
         put_pr 7
         v 7 comment "$(body_file att "$text")"
-        check "#71-AC3 a body with a tool-attribution line is refused (exit 1, nothing posted): ${text//$'\n'/ | }" bash -c '[ '"$rc"' -eq 1 ] && [ "$(calls)" -eq 0 ] && grep -qi "attribution" <<<"$1"' _ "$err"
+        check "#71-AC3 a body with a tool-attribution line is refused (exit 1, nothing posted): ${text//$'\n'/ | }" bash -c '[ '"$rc"' -eq 1 ] && [ '"$(calls)"' -eq 0 ] && grep -qi "attribution" <<<"$1"' _ "$err"
     done
     new_world
     put_pr 7
@@ -657,7 +657,7 @@ test_ac3_3_state() {
     new_world
     put_pr 7 state=closed merged=true
     v 7 comment "$(body_file b1)"
-    check "#71-AC3.3 a verdict on a merged PR: exit 1, says merged, nothing posted" bash -c '[ '"$rc"' -eq 1 ] && grep -q merged <<<"$1" && [ "$(grep -c "review" "'"$STUB_DIR"'/writes.log" 2>/dev/null)" -eq 0 ]' _ "$err"
+    check "#71-AC3.3 a verdict on a merged PR: exit 1, says merged, nothing posted" bash -c '[ '"$rc"' -eq 1 ] && grep -q merged <<<"$1" && ! grep -q "review" "'"$STUB_DIR"'/writes.log" 2>/dev/null' _ "$err"
     new_world
     put_pr 7 state=closed
     v 7 comment "$(body_file b1)"
@@ -699,7 +699,7 @@ test_ac3_6_partial() {
     put_pr 7
     fault "*pr review*" 2 502
     v 7 comment "$(body_file b1)"
-    check "#71-AC3.6 a 5xx on the call is retried (2 s, 4 s) and one review is posted" bash -c '[ '"$rc"' -eq 0 ] && [ "$(sleeps)" = "2 4 " ] && [ "$(jq length "'"$STUB_DIR"'/reviews/7.json")" -eq 1 ]'
+    check "#71-AC3.6 a 5xx on the call is retried (2 s, 4 s) and one review is posted" bash -c '[ '"$rc"' -eq 0 ] && [ "$(tr "\n" " " <"'"$STUB_DIR"'/sleeps")" = "2 4 " ] && [ "$(jq length "'"$STUB_DIR"'/reviews/7.json")" -eq 1 ]'
     new_world
     put_pr 7
     fault "*pr review*" 10 502

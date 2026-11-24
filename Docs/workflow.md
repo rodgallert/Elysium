@@ -261,7 +261,7 @@ Actions → Release → Run workflow, mode `dry-run`, any part and branch (a ser
 
 `main` and `release/**` require one status check, `gate` (the last job of `.github/workflows/build.yml`), so a PR with red CI can't be merged. It's one job with one name because no build job could be the required check: the `frontends (<path>)` jobs change name whenever an app is added, renamed or removed, and GitHub counts a skipped required check as passing, so a build job skipped on a Markdown-only change (or because a job it needs failed) would let the PR through. The gate runs on every change (`if: always()`), so a failed or cancelled job is reported as a failed gate rather than left pending.
 
-What `gate` checks (`tools/ci-gate.sh`; its fixture tests, `tools/tests/ci-tools.sh`, the Prince `.env` check's tests, `tools/tests/env-check.sh`, and the ticket script's tests, `tools/tests/ticket-tools.sh`, run in the gate job first). The `changes` job (`tools/ci-code-changed.sh`) decides whether the change touches anything besides Markdown; there is no `paths-ignore` filter, because a filtered workflow never reports:
+What `gate` checks (`tools/ci-gate.sh`; its fixture tests, `tools/tests/ci-tools.sh`, the Prince `.env` check's tests, `tools/tests/env-check.sh`, the ticket script's tests, `tools/tests/ticket-tools.sh`, and the PR script's tests, `tools/tests/pr-tools.sh`, run in the gate job first). The `changes` job (`tools/ci-code-changed.sh`) decides whether the change touches anything besides Markdown; there is no `paths-ignore` filter, because a filtered workflow never reports:
 
 | Case | Gate result |
 |---|---|
