@@ -1,0 +1,4 @@
+# Style-level findings that the shellcheck on ubuntu-24.04 (0.9) reports and newer releases do not: "A && B || C" used
+# as a guard (SC2015) and "cat file | cmd" (SC2002). Everything else stays on. Without this the lint cases of
+# tools/tests/ticket-tools.sh and tools/tests/pr-tools.sh fail on that runner image (#83).
+disable=SC2015,SC2002
