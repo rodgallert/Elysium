@@ -347,7 +347,7 @@ test_ac1_gate_source() {
     check "#71-AC1.2 a passing gate from another app next to the real, failing one: failure, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: failure" <<<"$1"' _ "$out"
     new_world
     ready_pr 7
-    put_checks "$sha_a" "[$(gate_obj "$sha_a" completed failure 15368 9001 5), $(gate_obj "$sha_a" completed success 15368 9999 9)]"
+    put_checks "$sha_a" "[$(gate_obj "$sha_a" completed failure 15368 9001 5), $(gate_obj "$sha_a" completed success 15368 9999 4242)]"
     p status 7
     check "#71-AC1.2 a passing gate from another workflow's run (not build.yml) next to the failing real one: failure, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: failure" <<<"$1"' _ "$out"
     new_world
@@ -357,9 +357,28 @@ test_ac1_gate_source() {
     check "#71-AC1.2 only a gate from another app: gate: none, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: none" <<<"$1"' _ "$out"
     new_world
     ready_pr 7
-    put_checks "$sha_a" "[$(gate_obj "$sha_a" completed success 15368 9999 9)]"
+    put_checks "$sha_a" "[$(gate_obj "$sha_a" completed success 15368 9999 4242)]"
     p status 7
     check "#71-AC1.2 only a gate from another workflow's run: gate: none, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: none" <<<"$1"' _ "$out"
+    # a check run made up through the API: GitHub Actions' app, this head, a real build.yml run in its details_url, but the id
+    # of no job of that run
+    new_world
+    ready_pr 7
+    put_checks "$sha_a" "[$(gate_obj "$sha_a" completed success 15368 9001 4242)]"
+    p status 7
+    check "#71-AC1.2 a gate check run that is no job of a build.yml run (forged, its details_url names a real run): gate: none, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: none" <<<"$1"' _ "$out"
+    new_world
+    ready_pr 7
+    put_checks "$sha_a" "[$(gate_obj "$sha_a" completed failure 15368 9001 5), $(gate_obj "$sha_a" completed success 15368 9001 4242)]"
+    p status 7
+    check "#71-AC1.2 a forged success next to the real failing gate job: failure, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: failure" <<<"$1"' _ "$out"
+    new_world
+    ready_pr 7
+    mkdir -p "$STUB_DIR/jobs"
+    echo '[{"id":77,"name":"dotnet"}]' >"$STUB_DIR/jobs/9001.json"
+    p status 7
+    check "#71-AC1.2 the build.yml run has no job named gate (yet): its id-1 check run named gate does not count: gate: none" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: none" <<<"$1"' _ "$out"
+    check "#71-AC1.2 the jobs of the build.yml run were read" bash -c 'grep -q "actions/runs/9001/jobs" "'"$STUB_DIR"'/calls.log"'
     new_world
     ready_pr 7
     mkdir -p "$STUB_DIR/wruns"
@@ -759,7 +778,7 @@ test_ac3_2_boundaries() {
 
 test_ac3_attribution() {
     local text
-    for text in '*Generated with [Tool](https://example.invalid)*' '_Generated with Tool_' '> Generated with Tool' '- Generated with Tool' '<sub>Generated with Tool</sub>' $'🤖 *Generated with Tool*' 'Co-authored-by : X <x@y.z>' '**Co-Authored-By:** X' '  > - _Generated with Tool_' $'Fine.\n\nGenerated with a tool' $'Fine.\n\nCo-Authored-By: Someone <a@b.c>' $'Fine.\n\n🤖 Generated with Tool' $'fine\nco-authored-by: x' $'Fine\n  Generated with x'; do
+    for text in '*Generated with [Tool](https://example.invalid)*' '_Generated with Tool_' '> Generated with Tool' '- Generated with Tool' '<sub>Generated with Tool</sub>' $'🤖 *Generated with Tool*' 'Co-authored-by : X <x@y.z>' '**Co-Authored-By:** X' '  > - _Generated with Tool_' '**Co-Authored-By**: X' '[Generated with Tool](https://example.invalid)' '1. Generated with Tool' 'Generated  with Tool' $'\tGenerated\twith Tool' $'🤖\xef\xb8\x8f Generated with Tool' '## GENERATED WITH Tool' $'Fine.\n\nGenerated with a tool' $'Fine.\n\nCo-Authored-By: Someone <a@b.c>' $'Fine.\n\n🤖 Generated with Tool' $'fine\nco-authored-by: x' $'Fine\n  Generated with x'; do
         new_world
         put_pr 7
         v 7 comment "$(body_file att "$text")"

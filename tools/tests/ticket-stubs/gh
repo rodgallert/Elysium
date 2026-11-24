@@ -9,7 +9,8 @@
 # pr/<n>.json (REST pull shape; pr/<n>.sha2 holds the head SHA the PR switches to from its second read on), branches
 # (one name per line), tips (repo<TAB>branch<TAB>sha[<TAB>ref the answer carries]: the branch tips tools/pr.sh reads; tips2 holds the tips from
 # the second read of a branch on), tags (names of tags: a short base name in a compare resolves to the tag, a wrong answer),
-# wruns/<sha>.json (the build workflow's runs for a SHA, default id 9001), behind/<sha> (how far a head is
+# wruns/<sha>.json (the build workflow's runs for a SHA, default id 9001), jobs/<run>.json (a run's jobs; by default the gate
+# jobs with ids 1, 5 and 9), behind/<sha> (how far a head is
 # behind its base), checks/<sha>.json (check runs of a commit), reviews/<n>.json, board/<n> (Status), faults, failnth.
 # Faults, one per line in $STUB_DIR/faults: <glob over the joined arguments><TAB><times><TAB><mode>[<TAB>after]
 #   modes: 502, rl-secondary:<seconds>, rl-primary, perm, 404, hang. With "after" the call's effect happens first and
@@ -229,6 +230,11 @@ api() {
             else
                 jq -c . "reviews/$n.json" 2>/dev/null || echo "[]"
             fi
+            ;;
+        "repos/$repo/actions/runs/"*/jobs)
+            local rid="${path#repos/$repo/actions/runs/}"
+            rid="${rid%/jobs}"
+            jq -nc --slurpfile j <(cat "jobs/$rid.json" 2>/dev/null || echo '[{"id":1,"name":"gate"},{"id":5,"name":"gate"},{"id":9,"name":"gate"},{"id":2,"name":"changes"}]') '{total_count: ($j[0] | length), jobs: $j[0]}'
             ;;
         "repos/$repo/actions/workflows/build.yml/runs")
             local hs="" kv
