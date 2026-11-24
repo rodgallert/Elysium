@@ -65,6 +65,7 @@ gh_call() {
     local step="$1" attempt=0 rc text status wait ra reset errf verify="$GH_VERIFY"
     shift
     GH_VERIFY=""
+    GH_ERR=""
     errf=$(mktemp) || die "mktemp failed"
     while :; do
         GH_OUT=$(timeout -k 2 "$TICKET_TIMEOUT" "$@" 2>"$errf" </dev/null)
@@ -77,7 +78,8 @@ gh_call() {
         text="$(cat "$errf")
 $GH_OUT"
         # shellcheck disable=SC2034 # read by the scripts that source this file
-        GH_ERR=$(head -c 400 "$errf" | tr '\n' ' ') # what gh said, for a caller that reports the reason
+        # what gh said, for a caller that reports the reason: no control characters, at most 400 bytes, cut on a character boundary
+        GH_ERR=$(tr -d '\000-\010\013-\037\177' <"$errf" | tr '\n' ' ' | head -c 400 | iconv -c -f UTF-8 -t UTF-8 2>/dev/null)
         status=$(grep -oE 'HTTP [0-9]{3}' <<<"$text" | head -1 | cut -d' ' -f2)
         if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
             GH_KIND=timeout

@@ -173,7 +173,7 @@ A ticket that only changes docs skips the build, the boundary check, the code re
 
 The review results go in the PR description. A review that finds problems sends the work back to the ticket (fix it on the same branch before merging, or open a new `fix/` ticket after). The merge only happens once the review is clean **and the PO has approved it**.
 
-**Ready to merge** means all of these, checked right before saying so: nobody is still working on the PR, the PR's head on GitHub equals the branch tip, CI is green on that commit, and the description has been re-read.
+**Ready to merge** means all of these, checked right before saying so: nobody is still working on the PR, the PR's head on GitHub equals the branch tip, CI is green on that commit (`tools/pr.sh status <pr>` checks the head, the tip, up to date, the `gate` check and the `Closes` line in one run), and the description has been re-read.
 
 ## Before you open a PR
 

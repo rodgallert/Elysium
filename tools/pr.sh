@@ -26,6 +26,8 @@ GH_LIB_NAME=pr.sh
 
 repo="$GH_LIB_REPO"
 max_body=65536
+tmp="$(mktemp -d)" || exit 1
+trap 'rm -rf "$tmp"' EXIT
 
 usage() {
     echo "Usage: pr.sh status <pr> | status --branch <name> | verdict <pr> <approve|changes|comment> --body-file <file> --sha <sha>" >&2
@@ -34,12 +36,13 @@ usage() {
 say() { printf '%s\n' "$*"; }
 
 # valid_ref <name>: a branch name that is safe to put in a path and a query: 1 to 255 of letters, digits and . _ / -,
-# no leading dash or slash, no "..", no "//", no trailing slash or ".lock", no "refs/" prefix, no "/refs/" inside
+# no leading dash or slash, no "..", no "//", no trailing slash or ".lock", no component starting with ".", no "refs/" prefix,
+# no "/refs/" inside
 valid_ref() {
     local n="${1-}"
     [ "${#n}" -ge 1 ] && [ "${#n}" -le 255 ] || return 1
     [[ "$n" =~ ^[A-Za-z0-9_][A-Za-z0-9._/-]*$ ]] || return 1
-    [[ "$n" != *..* && "$n" != *//* && "$n" != */ && "$n" != *.lock && "$n" != refs/* && "$n" != */refs/* ]]
+    [[ "$n" != *..* && "$n" != *//* && "$n" != */ && "$n" != *.lock && "$n" != .* && "$n" != */.* && "$n" != refs/* && "$n" != */refs/* ]]
 }
 valid_sha() { [[ "${1-}" =~ ^[0-9a-f]{40}$ ]]; }
 valid_repo() { [[ "${1-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; }
@@ -77,8 +80,20 @@ resolve_branch() {
 
 # ---- status --------------------------------------------------------------------------------------------------------------
 
+# read_tip: TIPSHA is the SHA of the exact branch $ref in the head repository $hrepo, empty when it has none
+read_tip() {
+    TIPSHA=""
+    [ -n "$hrepo" ] || return 0
+    if gh_call "read the tip of $ref" gh api "repos/$hrepo/git/ref/heads/$ref"; then
+        TIPSHA="$(jq -r --arg r "refs/heads/$ref" 'select(type == "object" and .ref == $r) | .object.sha // empty' <<<"$GH_OUT")"
+        valid_sha "$TIPSHA" || TIPSHA=""
+    elif [ "$GH_KIND" != notfound ]; then
+        die "$GH_MSG"
+    fi
+}
+
 cmd_status() {
-    local n="$1" state base ref sha hrepo body first tip tipsha behind gate closes fail=""
+    local n="$1" state base ref sha hrepo body first tip first_tip behind gate runs closes fail="" TIPSHA=""
     read_pr "$n"
     state="$(pr_state)"
     base="$(jq -r '.base.ref // ""' <<<"$PR")"
@@ -92,39 +107,38 @@ cmd_status() {
     valid_sha "$sha" || die "PR #$n: its head SHA is not 40 hex digits"
 
     # the tip of the head branch in the head repository (an exact ref, never a prefix match)
-    if [ -z "$hrepo" ]; then
-        tip=missing
-    elif ! valid_repo "$hrepo"; then
+    if [ -n "$hrepo" ] && ! valid_repo "$hrepo"; then
         die "PR #$n: its head repository name is not safe, refusing to use it"
-    elif gh_call "read the tip of $ref" gh api "repos/$hrepo/git/ref/heads/$ref"; then
-        tipsha="$(jq -r --arg r "refs/heads/$ref" 'select(type == "object" and .ref == $r) | .object.sha // empty' <<<"$GH_OUT")"
-        if [ -z "$tipsha" ]; then
-            tip=missing
-        elif [ "$tipsha" = "$sha" ]; then
-            tip=equal
-        else
-            tip="differs (remote $tipsha)"
-        fi
-    elif [ "$GH_KIND" = notfound ]; then
-        tip=missing
-    else
-        die "$GH_MSG"
     fi
-    [ "$hrepo" = "$repo" ] || [ -z "$hrepo" ] || { [ "$tip" = missing ] || tip="$tip (fork $hrepo)"; }
+    read_tip
+    if [ -z "$TIPSHA" ]; then
+        tip=missing
+    elif [ "$TIPSHA" = "$sha" ]; then
+        tip=equal
+    else
+        tip="differs (remote $TIPSHA)"
+    fi
+    first_tip="$TIPSHA"
+    if [ "$hrepo" != "$repo" ] && [ "$tip" != missing ]; then tip="$tip (fork $hrepo)"; fi
 
-    must "compare the head with its base" gh api "repos/$repo/compare/$base...$sha"
+    # the base by its full refname: a tag with the base's name must not decide what the head is compared with
+    must "compare the head with its base" gh api "repos/$repo/compare/refs/heads/$base...$sha"
     behind="$(jq -r '.behind_by // empty' <<<"$GH_OUT")"
     [[ "$behind" =~ ^[0-9]+$ ]] || die "compare the head with its base: unexpected answer"
 
+    # the gate is the check run named gate of GitHub Actions (app 15368) in a run of build.yml on this commit; every such
+    # run must have succeeded, so another workflow's job with the same name can neither add nor hide a failure
+    must "read the build workflow's runs on the head" gh api "repos/$repo/actions/workflows/build.yml/runs?head_sha=$sha&per_page=100" --paginate
+    runs="$(jq -s -c '[.[].workflow_runs[]?.id]' <<<"$GH_OUT")" || die "read the build workflow's runs on the head: unexpected answer"
     must "read the checks of the head" gh api "repos/$repo/commits/$sha/check-runs?per_page=100" --paginate
-    gate="$(jq -s -r --arg sha "$sha" '
-        [.[].check_runs[]?] as $all
-        | ($all | map(select(.name == "gate"))) as $g
-        | ($g | map(select(.head_sha == $sha))) as $h
+    gate="$(jq -s -r --arg sha "$sha" --argjson runs "$runs" '
+        def runid: ((.details_url // "") | capture("/actions/runs/(?<r>[0-9]+)/") | .r | tonumber)?;
+        [.[].check_runs[]? | select(.name == "gate" and (.app.id // 0) == 15368 and .head_sha == $sha and (runid as $r | any($runs[]; . == $r)))] as $g
+        | ([$g[] | select(.status == "completed" and .conclusion != "success")] | first) as $bad
         | if ($g | length) == 0 then "none"
-          elif ($h | length) == 0 then "not run on head"
-          else ($h | max_by(.id)) as $r
-               | if $r.status != "completed" then "pending" else ($r.conclusion // "pending") end end' <<<"$GH_OUT")"
+          elif $bad != null then ($bad.conclusion // "failure")
+          elif any($g[]; .status != "completed") then "pending"
+          else "success" end' <<<"$GH_OUT")"
     [ -n "$gate" ] || die "read the checks of the head: unexpected answer"
 
     first="${body%%$'\n'*}"
@@ -134,15 +148,17 @@ cmd_status() {
     # a push since the first read: the facts above may belong to two different commits
     read_pr "$n"
     [ "$(jq -r '.head.sha // ""' <<<"$PR")" = "$sha" ] || die "head moved: PR #$n has a new head since it was read, run again"
+    read_tip
+    [ "$TIPSHA" = "$first_tip" ] || die "head moved: the branch $ref changed since it was read, run again"
 
     if [ "$state" != open ]; then
         fail="state is $state"
-    elif [ "$tip" != equal ] && [[ "$tip" != "equal "* ]]; then
+    elif [ "$hrepo" != "$repo" ]; then
+        fail="head is a fork"
+    elif [ "$tip" != equal ]; then
         fail="head differs from the branch tip"
     elif [ "$behind" -gt 0 ]; then
         fail="branch is behind $base"
-    elif [ "$gate" = "not run on head" ]; then
-        fail="gate not run on head"
     elif [ "$gate" != success ]; then
         fail="gate is $gate"
     elif [ "$closes" != yes ]; then
@@ -167,12 +183,13 @@ cmd_status() {
 
 # ---- verdict -------------------------------------------------------------------------------------------------------------
 
-V_N="" V_EVENT="" V_SHA="" V_FIRST="" V_URL=""
-# match_reviews <json>: sets V_URL to the URL of this account's review of V_N for the same verdict, commit and first line
+V_N="" V_EVENT="" V_SHA="" V_FILE="" V_URL=""
+# match_reviews <json>: sets V_URL to the URL of this account's review of V_N with the same verdict, on the same commit and
+# with the same whole body (line ends and trailing whitespace normalised)
 match_reviews() {
-    V_URL="$(jq -s -r --arg o "$GH_LIB_OWNER" --arg ev "$V_EVENT" --arg c "$V_SHA" --arg f "$V_FIRST" '
-        def first: [(.body // "") | gsub("\r"; "") | split("\n")[] | select(test("[^\\s]"))][0] // "" | sub("\\s+$"; "");
-        add // [] | map(select(.user.login == $o and .state == $ev and .commit_id == $c and first == $f)) | last | .html_url // empty' <<<"$1")"
+    V_URL="$(jq -s -r --arg o "$GH_LIB_OWNER" --arg ev "$V_EVENT" --arg c "$V_SHA" --rawfile f "$V_FILE" '
+        def norm: (. // "") | gsub("\r\n"; "\n") | gsub("\r"; "\n") | split("\n") | map(sub("[ \t]+$"; "")) | join("\n") | sub("^\n+"; "") | sub("\n+$"; "");
+        add // [] | map(select(.user.login == $o and .state == $ev and .commit_id == $c and (.body | norm) == ($f | norm))) | last | .html_url // empty' <<<"$1")"
     [ -n "$V_URL" ]
 }
 # find_review: the same, reading the reviews itself (one try, no retries): 0 found, 1 none, 2 could not read
@@ -183,22 +200,22 @@ find_review() {
 }
 
 cmd_verdict() {
-    local n="$1" verdict="$2" file="$3" sha="$4" chars flag first lockdir
+    local n="$1" verdict="$2" file="$3" sha="$4" chars event lockdir
     case "$verdict" in
-        approve) flag=--approve V_EVENT=APPROVED ;;
-        changes) flag=--request-changes V_EVENT=CHANGES_REQUESTED ;;
-        comment) flag=--comment V_EVENT=COMMENTED ;;
+        approve) event=APPROVE V_EVENT=APPROVED ;;
+        changes) event=REQUEST_CHANGES V_EVENT=CHANGES_REQUESTED ;;
+        comment) event=COMMENT V_EVENT=COMMENTED ;;
     esac
     chars="$(LC_ALL=C.UTF-8 wc -m <"$file" | tr -d ' ')"
     if [ "$chars" -gt "$max_body" ]; then
         echo "pr.sh: the body has $chars characters; GitHub accepts at most $max_body" >&2
         exit 1
     fi
-    if LC_ALL=C grep -qiE '^[[:space:]]*(🤖[[:space:]]*)?(Generated with|Co-Authored-By:)' "$file"; then
+    # a line that is a tool attribution, however decorated (Markdown emphasis, quote, list, HTML tag, robot emoji)
+    if LC_ALL=C grep -qiE '^([[:space:]>*_~+#|`-]|<[^>]*>|🤖)*(Generated with|Co-Authored-By[[:space:]]*:)' "$file"; then
         echo "pr.sh: the body has a tool-attribution line (Generated with, Co-Authored-By): remove it" >&2
         exit 1
     fi
-    first="$(grep -m1 '[^[:space:]]' "$file" | tr -d '\r' | sed -E 's/[[:space:]]+$//')"
     gh_init
     lockdir="${TICKET_LOCK_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/elysium}"
     (umask 077 && mkdir -p "$lockdir") || die "cannot create the lock directory $lockdir"
@@ -212,7 +229,7 @@ cmd_verdict() {
     esac
     [ "$(jq -r '.head.sha // ""' <<<"$PR")" = "$sha" ] || die "head moved: PR #$n has head $(jq -r '.head.sha // ""' <<<"$PR"), not $sha"
 
-    V_N="$n" V_SHA="$sha" V_FIRST="$first"
+    V_N="$n" V_SHA="$sha" V_FILE="$file"
     gh_call "list the reviews of #$n" gh api "repos/$repo/pulls/$n/reviews?per_page=100" --paginate || die "$GH_MSG"
     if match_reviews "$GH_OUT"; then
         say "already posted: $V_URL"
@@ -222,20 +239,25 @@ cmd_verdict() {
     read_pr "$n" # right before the call: a push since the first read stops the review
     [ "$(jq -r '.head.sha // ""' <<<"$PR")" = "$sha" ] || die "head moved: PR #$n has a new head since the review started, nothing was posted"
 
+    # the review is attached to the reviewed commit (commit_id), and the body reaches gh only inside a request file
+    jq -n --rawfile b "$file" --arg c "$sha" --arg e "$event" '{commit_id: $c, event: $e, body: $b}' >"$tmp/review.json" || die "cannot build the review request"
     GH_VERIFY=find_review
-    if gh_call "post the review on #$n" gh pr review "$n" --repo "$repo" "$flag" --body-file "$file"; then
-        find_review || V_URL=""
+    if gh_call "post the review on #$n" gh api -X POST "repos/$repo/pulls/$n/reviews" --input "$tmp/review.json"; then
+        V_URL="$(jq -r '.html_url // empty' <<<"$GH_OUT" 2>/dev/null)"
+        [ -n "$V_URL" ] || find_review || V_URL=""
     else
         if grep -qi 'own pull request' <<<"$GH_ERR"; then
             die "GitHub refused the review: ${GH_ERR%% }"
         fi
-        # the review may have been posted although the call failed: look before saying it did not
-        if find_review; then
-            say "review: $V_URL"
-            return 0
-        elif [ $? -eq 2 ]; then
-            die "$GH_MSG; could not check whether the review exists on #$n"
-        fi
+        # the review may have been posted although the call failed (the last attempt's answer lost): look before saying so
+        find_review
+        case $? in
+            0)
+                say "review: $V_URL"
+                return 0
+                ;;
+            2) die "$GH_MSG; could not check whether the review exists on #$n" ;;
+        esac
         die "$GH_MSG; no review with this body exists on #$n"
     fi
     say "review: ${V_URL:-posted}"

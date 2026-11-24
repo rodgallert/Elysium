@@ -274,10 +274,10 @@ api() {
                 reads=$(($(cat "tips.reads" 2>/dev/null | grep -cxF "$rr $br") + 1))
                 echo "$rr $br" >>tips.reads
                 if [ "$reads" -ge 2 ] && [ -f tips2 ] && awk -F'\t' -v r="$rr" -v b="$br" '$1 == r && $2 == b {f = 1} END {exit !f}' tips2; then tf=tips2; fi
-                sha=$(awk -F'\t' -v r="$rr" -v b="$br" '$1 == r && $2 == b {print $3}' "$tf")
+                sha=$(awk -F'\t' -v r="$rr" -v b="$br" '$1 == r && $2 == b {print $3}' "$tf" | tail -1)
                 [ -n "$sha" ] || fail 404
                 local carried
-                carried=$(awk -F'\t' -v r="$rr" -v b="$br" '$1 == r && $2 == b {print $4}' "$tf")
+                carried=$(awk -F'\t' -v r="$rr" -v b="$br" '$1 == r && $2 == b {print $4}' "$tf" | tail -1)
                 jq -nc --arg r "${carried:-refs/heads/$br}" --arg s "$sha" '{ref:$r, object:{sha:$s, type:"commit"}}'
             else
                 grep -qxF "$br" branches 2>/dev/null || fail 404
