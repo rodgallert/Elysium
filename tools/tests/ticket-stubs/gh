@@ -7,7 +7,9 @@
 # State ($STUB_DIR): issue/<n>.json (REST shape), comments/<n>.json (with user and created_at), edits/<n>.json (userContentEdits
 # nodes, newest first, each `diff` the whole body of that revision as GitHub returns it), linked (issue<TAB>branch),
 # pr/<n>.json (REST pull shape; pr/<n>.sha2 holds the head SHA the PR switches to from its second read on), branches
-# (one name per line), tips (repo<TAB>branch<TAB>sha: the branch tips tools/pr.sh reads), behind/<sha> (how far a head is
+# (one name per line), tips (repo<TAB>branch<TAB>sha[<TAB>ref the answer carries]: the branch tips tools/pr.sh reads; tips2 holds the tips from
+# the second read of a branch on), tags (names of tags: a short base name in a compare resolves to the tag, a wrong answer),
+# wruns/<sha>.json (the build workflow's runs for a SHA, default id 9001), behind/<sha> (how far a head is
 # behind its base), checks/<sha>.json (check runs of a commit), reviews/<n>.json, board/<n> (Status), faults, failnth.
 # Faults, one per line in $STUB_DIR/faults: <glob over the joined arguments><TAB><times><TAB><mode>[<TAB>after]
 #   modes: 502, rl-secondary:<seconds>, rl-primary, perm, 404, hang. With "after" the call's effect happens first and
@@ -202,13 +204,38 @@ api() {
             done
 
             ls pr/*.json >/dev/null 2>&1 || { echo '[]'; return 0; }
-            jq -sc --arg w "$want" --arg h "$head" '[.[] | select(($w == "all" or .state == $w)
-                and ($h == "" or ((.head.repo.full_name | split("/")[0]) + ":" + .head.ref) == $h))]' pr/*.json
+            jq -sc --arg w "$want" --arg h "$head" --arg ignore "${STUB_PULLS_IGNORE_HEAD:-0}" '[.[] | select(($w == "all" or .state == $w)
+                and ($h == "" or $ignore == "1" or ((.head.repo.full_name | split("/")[0]) + ":" + .head.ref) == $h))]' pr/*.json
             ;;
         "repos/$repo/pulls/"*/reviews)
             local n="${path#repos/$repo/pulls/}"
             n="${n%/reviews}"
-            jq -c . "reviews/$n.json" 2>/dev/null || echo "[]"
+            if [ "$method" = POST ]; then
+                [ -f "pr/$n.json" ] || fail 404
+                local ev
+                ev=$(jq -r '{APPROVE:"APPROVED", REQUEST_CHANGES:"CHANGES_REQUESTED", COMMENT:"COMMENTED"}[.event] // empty' "$input")
+                [ -n "$ev" ] || { echo "gh: Unprocessable Entity (HTTP 422)" >&2; exit 1; }
+                if [ "$ev" = APPROVED ] && [ "$(jq -r .user.login "pr/$n.json")" = rodgallert ]; then
+                    echo "gh: Unprocessable Entity: Can not approve your own pull request (HTTP 422)" >&2
+                    exit 1
+                fi
+                write review
+                [ -f "reviews/$n.json" ] || { mkdir -p reviews; echo '[]' >"reviews/$n.json"; }
+                local id=$((7000 + $(jq length "reviews/$n.json")))
+                jq -c --argjson id "$id" --arg ev "$ev" --slurpfile i "$input" --arg url "https://github.com/$repo/pull/$n#pullrequestreview-$id" \
+                    '. + [{id:$id, user:{login:"rodgallert"}, state:$ev, body:$i[0].body, commit_id:$i[0].commit_id, html_url:$url}]' "reviews/$n.json" >"reviews/$n.tmp" &&
+                    mv "reviews/$n.tmp" "reviews/$n.json"
+                jq -c '.[-1]' "reviews/$n.json"
+            else
+                jq -c . "reviews/$n.json" 2>/dev/null || echo "[]"
+            fi
+            ;;
+        "repos/$repo/actions/workflows/build.yml/runs")
+            local hs="" kv
+            for kv in ${query//&/ }; do
+                case "$kv" in head_sha=*) hs="${kv#head_sha=}" ;; esac
+            done
+            jq -nc --slurpfile r <(cat "wruns/$hs.json" 2>/dev/null || echo '[{"id":9001}]') '{total_count: ($r[0] | length), workflow_runs: $r[0]}'
             ;;
         "repos/$repo/pulls/"*)
             local n="${path#repos/$repo/pulls/}"
@@ -222,8 +249,13 @@ api() {
             jq -c . "pr/$n.json"
             ;;
         "repos/$repo/compare/"*)
-            local sha="${path##*...}"
-            echo "{\"behind_by\":$(cat "behind/$sha" 2>/dev/null || echo 0),\"ahead_by\":1}"
+            local spec="${path#repos/$repo/compare/}" cb sha behind
+            cb="${spec%%...*}"
+            sha="${spec##*...}"
+            behind=$(cat "behind/$sha" 2>/dev/null || echo 0)
+            # a short name that is also a tag names the tag: a wrong answer a full refname avoids
+            if [ "${cb#refs/heads/}" = "$cb" ] && grep -qxF "$cb" tags 2>/dev/null; then behind=99; fi
+            echo "{\"behind_by\":$behind,\"ahead_by\":1}"
             ;;
         "repos/"*/*/commits/*/check-runs)
             local sha="${path#repos/*/*/commits/}"
@@ -238,9 +270,15 @@ api() {
             br="${path#*/git/ref/heads/}"
             if [ -f tips ]; then
                 local sha
-                sha=$(awk -F'\t' -v r="$rr" -v b="$br" '$1 == r && $2 == b {print $3}' tips)
+                local tf=tips reads
+                reads=$(($(cat "tips.reads" 2>/dev/null | grep -cxF "$rr $br") + 1))
+                echo "$rr $br" >>tips.reads
+                if [ "$reads" -ge 2 ] && [ -f tips2 ] && awk -F'\t' -v r="$rr" -v b="$br" '$1 == r && $2 == b {f = 1} END {exit !f}' tips2; then tf=tips2; fi
+                sha=$(awk -F'\t' -v r="$rr" -v b="$br" '$1 == r && $2 == b {print $3}' "$tf")
                 [ -n "$sha" ] || fail 404
-                jq -nc --arg r "refs/heads/$br" --arg s "$sha" '{ref:$r, object:{sha:$s, type:"commit"}}'
+                local carried
+                carried=$(awk -F'\t' -v r="$rr" -v b="$br" '$1 == r && $2 == b {print $4}' "$tf")
+                jq -nc --arg r "${carried:-refs/heads/$br}" --arg s "$sha" '{ref:$r, object:{sha:$s, type:"commit"}}'
             else
                 grep -qxF "$br" branches 2>/dev/null || fail 404
                 echo '{"ref":"ok"}'
@@ -315,36 +353,6 @@ case "$1" in
                 ;;
             *) echo "stub gh: unexpected issue command: $joined" >&2; exit 99 ;;
         esac
-        ;;
-    pr)
-        # gh pr review <n> --repo R (--approve | --request-changes | --comment) --body-file F
-        [ "$2" = review ] || { echo "stub gh: unexpected pr command: $joined" >&2; exit 99; }
-        n="$3"
-        event=""
-        file=""
-        prev=""
-        for a in "$@"; do
-            case "$a" in
-                --approve) event=APPROVED ;;
-                --request-changes) event=CHANGES_REQUESTED ;;
-                --comment) event=COMMENTED ;;
-            esac
-            [ "$prev" = --body-file ] && file="$a"
-            prev="$a"
-        done
-        [ -f "pr/$n.json" ] && [ -n "$event" ] && [ -f "$file" ] || { echo "stub gh: bad pr review call: $joined" >&2; exit 99; }
-        if [ "$event" = APPROVED ] && [ "$(jq -r .user.login "pr/$n.json")" = rodgallert ]; then
-            echo "failed to create review: GraphQL: Can not approve your own pull request (addPullRequestReview)" >&2
-            exit 1
-        fi
-        write review
-        [ -f "reviews/$n.json" ] || { mkdir -p reviews; echo '[]' >"reviews/$n.json"; }
-        id=$((7000 + $(jq length "reviews/$n.json")))
-        jq -c --argjson id "$id" --arg ev "$event" --rawfile b "$file" --arg c "$(jq -r .head.sha "pr/$n.json")" \
-            --arg url "https://github.com/$repo/pull/$n#pullrequestreview-$id" \
-            '. + [{id:$id, user:{login:"rodgallert"}, state:$ev, body:$b, commit_id:$c, html_url:$url}]' "reviews/$n.json" >"reviews/$n.tmp" &&
-            mv "reviews/$n.tmp" "reviews/$n.json"
-        out=""
         ;;
     *) echo "stub gh: unexpected command: $joined" >&2; exit 99 ;;
 esac

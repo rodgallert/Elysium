@@ -74,8 +74,15 @@ tip() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" >>"$STUB_DIR/tips"; } # <repo> <bra
 behind() { echo "$2" >"$STUB_DIR/behind/$1"; }               # <sha> <count>
 # put_checks <sha> <json array of runs>
 put_checks() { echo "$2" >"$STUB_DIR/checks/$1.json"; }
-gate_run() { # <sha> <status> <conclusion|null> [head_sha]: one gate run on <sha>
-    jq -nc --arg h "${4:-$1}" --arg s "$2" --arg c "$3" '[{id:1, name:"gate", status:$s, conclusion:(if $c == "null" then null else $c end), head_sha:$h}]'
+# gate_obj <head_sha> <status> <conclusion|null> [app id] [workflow run id] [check id]: one check run named gate; by default the
+# one the build workflow's run 9001 makes (GitHub Actions, app 15368)
+gate_obj() {
+    jq -nc --arg h "$1" --arg s "$2" --arg c "$3" --argjson app "${4:-15368}" --arg run "${5:-9001}" --argjson id "${6:-1}" \
+        '{id:$id, name:"gate", app:{id:$app}, details_url:("https://github.com/rodgallert/Elysium/actions/runs/" + $run + "/job/1"),
+          status:$s, conclusion:(if $c == "null" then null else $c end), head_sha:$h}'
+}
+gate_run() { # <sha> <status> <conclusion|null> [head_sha]: the list with that one gate run
+    jq -nc --argjson g "$(gate_obj "${4:-$1}" "$2" "$3")" '[$g]'
 }
 # ready_pr <n> [key=value]...: an open PR with everything in order (tip equal, up to date, gate success, Closes)
 ready_pr() {
@@ -215,7 +222,7 @@ test_ac1_1_inputs() {
 
     # a branch name in the PR data that is not a safe refname is refused before any ref lookup
     local ref
-    for ref in 'feat/a b' 'feat/x..y' '-x' 'feat//x' 'feat/$(id)' 'x/refs/heads/y' 'refs/heads/x' 'feat/x.lock' 'feat/x/'; do
+    for ref in 'feat/a b' 'feat/x..y' '-x' 'feat//x' 'feat/$(id)' 'x/refs/heads/y' 'refs/heads/x' 'feat/x.lock' 'feat/x/' 'feat/./x' 'feat/.x' '.x'; do
         new_world
         ready_pr 7 "ref=$ref"
         p status 7
@@ -244,7 +251,7 @@ test_ac1_2_boundaries() {
     new_world
     ready_pr 7
     put_checks "$sha_a" "$(jq -nc --arg h "$sha_a" '[range(0; 140) | {id: (. + 10), name: ("check-" + tostring), status: "completed", conclusion: "success", head_sha: $h}]
-        + [{id: 1000, name: "gate", status: "completed", conclusion: "success", head_sha: $h}]
+        + [{id: 1000, name: "gate", app: {id: 15368}, details_url: "https://github.com/rodgallert/Elysium/actions/runs/9001/job/1", status: "completed", conclusion: "success", head_sha: $h}]
         + [range(0; 9) | {id: (. + 2000), name: ("late-" + tostring), status: "completed", conclusion: "success", head_sha: $h}]')"
     p status 7
     check "#71-AC1.2 150 checks, gate on the second page: found, exit 0" rc_is 0
@@ -254,17 +261,27 @@ test_ac1_2_boundaries() {
     put_checks "$sha_a" "$(jq -nc --arg h "$sha_a" '[range(0; 140) | {id: (. + 10), name: ("check-" + tostring), status: "completed", conclusion: "success", head_sha: $h}]')"
     p status 7
     check "#71-AC1.2 100+ checks without a gate: none, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: none" <<<"$1"' _ "$out"
-    # two runs of the gate (a re-run): the newest counts
+    # every gate run on the head must have succeeded: one failure among them wins, in either order
     new_world
     ready_pr 7
-    put_checks "$sha_a" '[{"id":5,"name":"gate","status":"completed","conclusion":"failure","head_sha":"'"$sha_a"'"},{"id":9,"name":"gate","status":"completed","conclusion":"success","head_sha":"'"$sha_a"'"}]'
+    put_checks "$sha_a" "[$(gate_obj "$sha_a" completed failure 15368 9001 5), $(gate_obj "$sha_a" completed success 15368 9001 9)]"
     p status 7
-    check "#71-AC1.2 a re-run gate: the newest run counts" rc_is 0
+    check "#71-AC1.2 two gate runs on the head, an older failure and a newer success: failure, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: failure" <<<"$1"' _ "$out"
     new_world
     ready_pr 7
-    put_checks "$sha_a" '[{"id":5,"name":"gate","status":"completed","conclusion":"success","head_sha":"'"$sha_a"'"},{"id":9,"name":"gate","status":"in_progress","conclusion":null,"head_sha":"'"$sha_a"'"}]'
+    put_checks "$sha_a" "[$(gate_obj "$sha_a" completed success 15368 9001 5), $(gate_obj "$sha_a" completed failure 15368 9001 9)]"
     p status 7
-    check "#71-AC1.2 a newer gate run still going: pending, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: pending" <<<"$1"' _ "$out"
+    check "#71-AC1.2 two gate runs on the head, a success and a newer failure: failure, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: failure" <<<"$1"' _ "$out"
+    new_world
+    ready_pr 7
+    put_checks "$sha_a" "[$(gate_obj "$sha_a" completed success 15368 9001 5), $(gate_obj "$sha_a" completed success 15368 9001 9)]"
+    p status 7
+    check "#71-AC1.2 two gate runs on the head, both successful: success" rc_is 0
+    new_world
+    ready_pr 7
+    put_checks "$sha_a" "[$(gate_obj "$sha_a" completed success 15368 9001 5), $(gate_obj "$sha_a" in_progress null 15368 9001 9)]"
+    p status 7
+    check "#71-AC1.2 a gate run still going next to a success: pending, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: pending" <<<"$1"' _ "$out"
 }
 
 test_ac1_3_state() {
@@ -282,7 +299,7 @@ test_ac1_3_state() {
     ready_pr 7
     put_checks "$sha_a" "$(gate_run "$sha_a" completed success "$sha_b")"
     p status 7
-    check "#71-AC1.3 a gate that ran on an older SHA: gate not run on head, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: not run on head" <<<"$1" && grep -q "gate not run on head" <<<"$1"' _ "$out"
+    check "#71-AC1.3 a head with no gate run (the list is by SHA, an older SHA's gate does not count): gate: none, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: none" <<<"$1" && ! grep -q "not run on head" <<<"$1" && grep -q "^not ready: gate is none" <<<"$1"' _ "$out"
     new_world
     ready_pr 7
     put_checks "$sha_a" "$(gate_run "$sha_a" in_progress null)"
@@ -319,6 +336,92 @@ test_ac1_3_state() {
     put_checks "$sha_a" "$(gate_run "$sha_a" completed success)"
     p status 7
     check "#71-AC1.3 a fork PR whose fork branch moved: tip differs even though this repository's branch has the SHA" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^tip: differs" <<<"$1"' _ "$out"
+}
+
+test_ac1_gate_source() {
+    # only the build workflow's gate (GitHub Actions app 15368, a run of build.yml on this SHA) counts
+    new_world
+    ready_pr 7
+    put_checks "$sha_a" "[$(gate_obj "$sha_a" completed failure 15368 9001 5), $(gate_obj "$sha_a" completed success 777 9001 9)]"
+    p status 7
+    check "#71-AC1.2 a passing gate from another app next to the real, failing one: failure, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: failure" <<<"$1"' _ "$out"
+    new_world
+    ready_pr 7
+    put_checks "$sha_a" "[$(gate_obj "$sha_a" completed failure 15368 9001 5), $(gate_obj "$sha_a" completed success 15368 9999 9)]"
+    p status 7
+    check "#71-AC1.2 a passing gate from another workflow's run (not build.yml) next to the failing real one: failure, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: failure" <<<"$1"' _ "$out"
+    new_world
+    ready_pr 7
+    put_checks "$sha_a" "[$(gate_obj "$sha_a" completed success 777 9001 9)]"
+    p status 7
+    check "#71-AC1.2 only a gate from another app: gate: none, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: none" <<<"$1"' _ "$out"
+    new_world
+    ready_pr 7
+    put_checks "$sha_a" "[$(gate_obj "$sha_a" completed success 15368 9999 9)]"
+    p status 7
+    check "#71-AC1.2 only a gate from another workflow's run: gate: none, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: none" <<<"$1"' _ "$out"
+    new_world
+    ready_pr 7
+    mkdir -p "$STUB_DIR/wruns"
+    echo '[{"id":8000}]' >"$STUB_DIR/wruns/$sha_a.json"
+    p status 7
+    check "#71-AC1.2 build.yml has no run 9001 on this SHA: the gate does not count, gate: none" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: none" <<<"$1"' _ "$out"
+    new_world
+    ready_pr 7
+    put_checks "$sha_a" "[$(gate_obj "$sha_b" completed success)]"
+    p status 7
+    check "#71-AC1.2 a gate run whose head_sha is another commit does not count: gate: none" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: none" <<<"$1"' _ "$out"
+    check "#71-AC1.2 the build workflow's runs were read for the head SHA" bash -c 'grep -q "actions/workflows/build.yml/runs?.*head_sha='"$sha_a"'" "'"$STUB_DIR"'/calls.log"'
+}
+
+test_ac1_fork_and_pins() {
+    # a head in another repository is not ready, however green
+    new_world
+    put_pr 7 repo=evil/Elysium "sha=$sha_a"
+    tip evil/Elysium feat/x "$sha_a"
+    behind "$sha_a" 0
+    put_checks "$sha_a" "$(gate_run "$sha_a" completed success)"
+    p status 7
+    check "#71-AC1.3 a PR from a fork with everything else in order: exit 1, head is a fork" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^not ready: head is a fork" <<<"$1"' _ "$out"
+
+    # the exact ref filter on the tip answer: an answer carrying another refname is no tip
+    new_world
+    ready_pr 7
+    : >"$STUB_DIR/tips"
+    printf '%s\t%s\t%s\t%s\n' "$repo" feat/x "$sha_a" refs/heads/feat/x-other >>"$STUB_DIR/tips"
+    p status 7
+    check "#71-AC1 a ref answer for another refname is ignored: tip missing, exit 1" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^tip: missing" <<<"$1"' _ "$out"
+
+    # the Closes line format
+    local body shown
+    for body in 'closes #7' 'Closes #0' 'Closes #7x' 'Fixes #7' 'Closes' 'Closes#7' 'See Closes #7' 'Closes #07' 'Closes #12345678' $'\nCloses #7'; do
+        new_world
+        ready_pr 7 "body=$body"
+        p status 7
+        shown="${body//$'\n'/\\n}"
+        check "#71-AC1 body starting '$shown' has no valid Closes line: exit 1, closes: no" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^closes: no" <<<"$1"' _ "$out"
+    done
+    for body in 'Closes #7' 'Closes #1234567' $'Closes #7\n\nmore' 'Closes #7  '; do
+        new_world
+        ready_pr 7 "body=$body"
+        p status 7
+        shown="${body//$'\n'/\\n}"
+        check "#71-AC1 body starting '$shown' has a valid Closes line: exit 0" rc_is 0
+    done
+
+    # the base is compared by its full refname: a tag named like the base decides nothing
+    new_world
+    ready_pr 7
+    printf 'main\n' >"$STUB_DIR/tags"
+    p status 7
+    check "#71-AC1 a tag named like the base branch does not decide up-to-date (compare uses refs/heads/<base>)" bash -c '[ '"$rc"' -eq 0 ] && grep -q "^up-to-date: yes" <<<"$1" && grep -q "compare/refs/heads/main\.\.\." "'"$STUB_DIR"'/calls.log"' _ "$out"
+
+    # the tip is read again at the end
+    new_world
+    ready_pr 7
+    printf '%s\t%s\t%s\n' "$repo" feat/x "$sha_b" >"$STUB_DIR/tips2"
+    p status 7
+    check "#71-AC1.5 the branch tip moving during the run: exit 1, head moved, nothing printed" bash -c '[ '"$rc"' -eq 1 ] && grep -q "head moved" <<<"$1" && [ -z "$2" ]' _ "$err" "$out"
 }
 
 test_ac1_5_concurrency() {
@@ -478,7 +581,7 @@ test_ac2_exact() {
 
 test_ac2_1_inputs() {
     local bad
-    for bad in 'a..b' 'a b' '-x' '' 'refs/heads/x' 'x/refs/heads/y' 'a//b' 'a/' 'x.lock' $'a\nb' 'a~1' 'a^b' 'a:b' 'a?b' 'a*b' 'a[b' 'a\b' '$(id)'; do
+    for bad in 'a..b' 'a b' '-x' '' 'refs/heads/x' 'x/refs/heads/y' 'a//b' 'a/' 'x.lock' $'a\nb' 'a~1' 'a^b' 'a:b' 'a?b' 'a*b' 'a[b' 'a\b' '$(id)' 'a/./b' 'a/.b' '.a'; do
         new_world
         p status --branch "$bad"
         check "#71-AC2.1 --branch '${bad//$'\n'/\\n}': exit 2, gh never called" usage_exit
@@ -535,6 +638,20 @@ test_ac2_3_state() {
     check "#71-AC2.3 only a fork has a PR with this name: no PR for it here (exit 1)" bash -c '[ '"$rc"' -eq 1 ] && grep -qF "no PR for feat/x" <<<"$1"' _ "$out$err"
 }
 
+test_ac2_closed_fork() {
+    new_world
+    ready_pr 3 ref=feat/x state=closed repo=evil/Elysium
+    XENV=(STUB_PULLS_IGNORE_HEAD=1)
+    p status --branch feat/x
+    check "#71-AC2 a closed PR from a fork with the same branch name is not this repository's: no PR for it (even when the listing returns it)" bash -c '[ '"$rc"' -eq 1 ] && grep -qF "no PR for feat/x" <<<"$1"' _ "$out$err"
+    new_world
+    ready_pr 3 ref=feat/x state=closed repo=evil/Elysium
+    ready_pr 2 ref=feat/x state=closed
+    XENV=(STUB_PULLS_IGNORE_HEAD=1)
+    p status --branch feat/x
+    check "#71-AC2 a closed fork PR with a higher number does not outrank this repository's closed PR" bash -c 'grep -q "^pr: 2" <<<"$1"' _ "$out"
+}
+
 test_ac2_6_partial() {
     branch_world
     fault "*pulls*" 10 502
@@ -553,15 +670,16 @@ test_ac2_6_partial() {
 # ---- #71-AC3: verdict --------------------------------------------------------------------------------------------------
 
 test_ac3_flags() {
-    local pair verdict flag
-    for pair in approve:--approve changes:--request-changes comment:--comment; do
+    local pair verdict state
+    for pair in approve:APPROVED changes:CHANGES_REQUESTED comment:COMMENTED; do
         verdict="${pair%%:*}"
-        flag="${pair#*:}"
+        state="${pair#*:}"
         new_world
         put_pr 7
         v 7 "$verdict" "$(body_file b1)"
-        check "#71-AC3 $verdict posts one review with $flag" bash -c '[ '"$rc"' -eq 0 ] && [ "$(grep -c "^pr.review" "'"$STUB_DIR"'/calls.log")" -eq 0 ] && [ "$(grep -cP "\tpr\treview\t" "'"$STUB_DIR"'/calls.log")" -eq 1 ] && grep -P "\tpr\treview\t" "'"$STUB_DIR"'/calls.log" | grep -qF -e "'"$flag"'" && [ "$(jq length "'"$STUB_DIR"'/reviews/7.json")" -eq 1 ]'
-        check "#71-AC3 $verdict: the body is passed as --body-file, never as an argument" bash -c 'grep -P "\tpr\treview\t" "'"$STUB_DIR"'/calls.log" | grep -q -e "--body-file" && ! grep -q "Looks right" "'"$STUB_DIR"'/calls.log"'
+        check "#71-AC3 $verdict posts one review ($state) through the reviews endpoint" bash -c '[ '"$rc"' -eq 0 ] && [ "$(grep -cP "\t-X\tPOST\t[^\t]*/pulls/[0-9]+/reviews" "'"$STUB_DIR"'/calls.log")" -eq 1 ] && [ "$(jq -r ".[0].state" "'"$STUB_DIR"'/reviews/7.json")" = '"$state"' ] && [ "$(jq length "'"$STUB_DIR"'/reviews/7.json")" -eq 1 ]'
+        check "#71-AC3 $verdict: the review is pinned to --sha (commit_id)" bash -c '[ "$(jq -r ".[0].commit_id" "'"$STUB_DIR"'/reviews/7.json")" = '"$sha_a"' ]'
+        check "#71-AC3 $verdict: the body travels in a request file (--input), never as an argument" bash -c 'grep -P "\t-X\tPOST\t" "'"$STUB_DIR"'/calls.log" | grep -q -e "--input" && ! grep -q "Looks right" "'"$STUB_DIR"'/calls.log"'
         check "#71-AC3.10 $verdict prints the review URL" bash -c 'grep -q "https://github.com/rodgallert/Elysium/pull/7#pullrequestreview-" <<<"$1"' _ "$out"
     done
     new_world
@@ -641,7 +759,7 @@ test_ac3_2_boundaries() {
 
 test_ac3_attribution() {
     local text
-    for text in $'Fine.\n\nGenerated with a tool' $'Fine.\n\nCo-Authored-By: Someone <a@b.c>' $'Fine.\n\n🤖 Generated with Tool' $'fine\nco-authored-by: x' $'Fine\n  Generated with x'; do
+    for text in '*Generated with [Tool](https://example.invalid)*' '_Generated with Tool_' '> Generated with Tool' '- Generated with Tool' '<sub>Generated with Tool</sub>' $'🤖 *Generated with Tool*' 'Co-authored-by : X <x@y.z>' '**Co-Authored-By:** X' '  > - _Generated with Tool_' $'Fine.\n\nGenerated with a tool' $'Fine.\n\nCo-Authored-By: Someone <a@b.c>' $'Fine.\n\n🤖 Generated with Tool' $'fine\nco-authored-by: x' $'Fine\n  Generated with x'; do
         new_world
         put_pr 7
         v 7 comment "$(body_file att "$text")"
@@ -666,7 +784,7 @@ test_ac3_3_state() {
     put_pr 7 user=rodgallert
     v 7 approve "$(body_file b1)"
     check "#71-AC3.3 approve on the account's own PR: exit 1 with GitHub's reason, reported as such" bash -c '[ '"$rc"' -eq 1 ] && grep -qi "own pull request" <<<"$1" && grep -qi "refused" <<<"$1"' _ "$err"
-    check "#71-AC3.3 the refusal is not retried and posts nothing" bash -c '[ "$(grep -cP "\tpr\treview\t" "'"$STUB_DIR"'/calls.log")" -eq 1 ] && [ "$(jq length "'"$STUB_DIR"'/reviews/7.json" 2>/dev/null || echo 0)" -eq 0 ] && [ ! -s "'"$STUB_DIR"'/sleeps" ]'
+    check "#71-AC3.3 the refusal is not retried and posts nothing" bash -c '[ "$(grep -cP "\t-X\tPOST\t[^\t]*/pulls/[0-9]+/reviews" "'"$STUB_DIR"'/calls.log")" -eq 1 ] && [ "$(jq length "'"$STUB_DIR"'/reviews/7.json" 2>/dev/null || echo 0)" -eq 0 ] && [ ! -s "'"$STUB_DIR"'/sleeps" ]'
     new_world
     put_pr 7 user=rodgallert
     v 7 comment "$(body_file b1)"
@@ -680,12 +798,12 @@ test_ac3_5_concurrency() {
     new_world
     put_pr 7 "sha=$sha_b"
     v 7 comment "$(body_file b1)" "$sha_a"
-    check "#71-AC3.5 --sha that is not the PR head: exit 1 (head moved), nothing posted" bash -c '[ '"$rc"' -eq 1 ] && grep -q "head moved" <<<"$1" && [ "$(grep -cP "\tpr\treview\t" "'"$STUB_DIR"'/calls.log")" -eq 0 ]' _ "$err"
+    check "#71-AC3.5 --sha that is not the PR head: exit 1 (head moved), nothing posted" bash -c '[ '"$rc"' -eq 1 ] && grep -q "head moved" <<<"$1" && [ "$(grep -cP "\t-X\tPOST\t[^\t]*/pulls/[0-9]+/reviews" "'"$STUB_DIR"'/calls.log")" -eq 0 ]' _ "$err"
     new_world
     put_pr 7
     echo "$sha_b" >"$STUB_DIR/pr/7.sha2"
     v 7 comment "$(body_file b1)" "$sha_a"
-    check "#71-AC3.5 a head that moves between the first read and the call: exit 1, nothing posted" bash -c '[ '"$rc"' -eq 1 ] && grep -q "head moved" <<<"$1" && [ "$(grep -cP "\tpr\treview\t" "'"$STUB_DIR"'/calls.log")" -eq 0 ]' _ "$err"
+    check "#71-AC3.5 a head that moves between the first read and the call: exit 1, nothing posted" bash -c '[ '"$rc"' -eq 1 ] && grep -q "head moved" <<<"$1" && [ "$(grep -cP "\t-X\tPOST\t[^\t]*/pulls/[0-9]+/reviews" "'"$STUB_DIR"'/calls.log")" -eq 0 ]' _ "$err"
     new_world
     put_pr 7
     ( v 7 comment "$(body_file b1)" >/dev/null; ) &
@@ -697,26 +815,44 @@ test_ac3_5_concurrency() {
 test_ac3_6_partial() {
     new_world
     put_pr 7
-    fault "*pr review*" 2 502
+    fault "*POST*pulls/7/reviews*" 2 502
     v 7 comment "$(body_file b1)"
     check "#71-AC3.6 a 5xx on the call is retried (2 s, 4 s) and one review is posted" bash -c '[ '"$rc"' -eq 0 ] && [ "$(tr "\n" " " <"'"$STUB_DIR"'/sleeps")" = "2 4 " ] && [ "$(jq length "'"$STUB_DIR"'/reviews/7.json")" -eq 1 ]'
     new_world
     put_pr 7
-    fault "*pr review*" 10 502
+    fault "*POST*pulls/7/reviews*" 10 502
     v 7 comment "$(body_file b1 'SECRETBODYTEXT first line')"
     check "#71-AC3.6 after the retries the exit is non-zero and says no review with this body exists" bash -c '[ '"$rc"' -ne 0 ] && grep -qi "no review" <<<"$1" && grep -qi "post" <<<"$1"' _ "$err"
     check "#71-AC3.6 the failure line does not show the body" silent_on SECRETBODYTEXT
     check "#71-AC3.6 the reviews were listed before saying it failed" bash -c 'grep -q "pulls/7/reviews" "'"$STUB_DIR"'/calls.log"'
     new_world
     put_pr 7
-    fault "*pr review*" 10 502 after
+    fault "*POST*pulls/7/reviews*" 10 502 after
     v 7 comment "$(body_file b1)"
     check "#71-AC3.6 a call whose answer was lost but whose review exists: exit 0, one review (not two)" bash -c '[ '"$rc"' -eq 0 ] && [ "$(jq length "'"$STUB_DIR"'/reviews/7.json")" -eq 1 ] && grep -q "pullrequestreview" <<<"$1"' _ "$out"
     new_world
     put_pr 7
     fault "*pulls/7/reviews*" 10 502
     v 7 comment "$(body_file b1)"
-    check "#71-AC3.6 listing the reviews failing (before the post): non-zero, nothing posted, names the step" bash -c '[ '"$rc"' -ne 0 ] && [ "$(grep -cP "\tpr\treview\t" "'"$STUB_DIR"'/calls.log")" -eq 0 ] && grep -qi "review" <<<"$1"' _ "$err"
+    check "#71-AC3.6 listing the reviews failing (before the post): non-zero, nothing posted, names the step" bash -c '[ '"$rc"' -ne 0 ] && [ "$(grep -cP "\t-X\tPOST\t[^\t]*/pulls/[0-9]+/reviews" "'"$STUB_DIR"'/calls.log")" -eq 0 ] && grep -qi "review" <<<"$1"' _ "$err"
+}
+
+test_ac3_6_last_attempt() {
+    # the last attempt posts the review and loses the answer: the lookup after the failure finds it (exit 0, its URL)
+    new_world
+    put_pr 7
+    fault "*POST*pulls/7/reviews*" 3 502
+    fault "*POST*pulls/7/reviews*" 1 502 after
+    v 7 comment "$(body_file b1)"
+    check "#71-AC3.6 the fourth attempt posted but its answer was lost: exit 0, one review, its URL" bash -c '[ '"$rc"' -eq 0 ] && [ "$(jq length "'"$STUB_DIR"'/reviews/7.json")" -eq 1 ] && grep -q "pullrequestreview-7000" <<<"$1"' _ "$out"
+    check "#71-AC3.6 four attempts were made (waits 2, 4, 8 s)" bash -c '[ "$(grep -cP "\t-X\tPOST\t[^\t]*/pulls/7/reviews" "'"$STUB_DIR"'/calls.log")" -eq 4 ] && [ "$(tr "\n" " " <"'"$STUB_DIR"'/sleeps")" = "2 4 8 " ]'
+    # another review of the same commit sharing the first line is not this one
+    new_world
+    put_pr 7
+    jq -nc --arg c "$sha_a" '[{id:1, user:{login:"rodgallert"}, state:"COMMENTED", body:"Looks right.\nsomething else", commit_id:$c, html_url:"https://example.invalid/r/1"}]' >"$STUB_DIR/reviews/7.json"
+    fault "*POST*pulls/7/reviews*" 10 502
+    v 7 comment "$(body_file b1)"
+    check "#71-AC3.6 a different review sharing the first line is not taken for this one: non-zero, no review of this body" bash -c '[ '"$rc"' -ne 0 ] && grep -qi "no review" <<<"$1"' _ "$err"
 }
 
 test_ac3_7_idempotence() {
@@ -730,10 +866,15 @@ test_ac3_7_idempotence() {
     check "#71-AC3.7 the same verdict and body twice posts one review" bash -c '[ "$(jq length "'"$STUB_DIR"'/reviews/7.json")" -eq 1 ]'
     check "#71-AC3.7 the second run prints already posted, exit 0, with the URL" bash -c '[ '"$rc"' -eq 0 ] && grep -q "already posted" <<<"$1" && grep -q "pullrequestreview-" <<<"$1"' _ "$out"
     check "#71-AC3.7 the first run did not say already posted" bash -c '! grep -q "already posted" <<<"$1"' _ "$first"
+    printf 'Looks right.\r\n\r\nDetails below.   \r\n\r\n' >"$work/crlf"
+    v 7 comment "$work/crlf"
+    check "#71-AC3.7 the same body with CRLF line ends and trailing spaces is the same review: already posted" bash -c 'grep -q "already posted" <<<"$1" && [ "$(jq length "'"$STUB_DIR"'/reviews/7.json")" -eq 1 ]' _ "$out"
+    v 7 comment "$(body_file b3 $'Looks right.\n\nA different second paragraph.')"
+    check "#71-AC3.7 two bodies sharing the first line but differing below it: both are posted" bash -c '[ '"$rc"' -eq 0 ] && ! grep -q "already posted" <<<"$1" && [ "$(jq length "'"$STUB_DIR"'/reviews/7.json")" -eq 2 ]' _ "$out"
     v 7 changes "$f"
-    check "#71-AC3.7 another verdict with the same body is a new review" bash -c '[ '"$rc"' -eq 0 ] && [ "$(jq length "'"$STUB_DIR"'/reviews/7.json")" -eq 2 ]'
+    check "#71-AC3.7 another verdict with the same body is a new review" bash -c '[ '"$rc"' -eq 0 ] && [ "$(jq length "'"$STUB_DIR"'/reviews/7.json")" -eq 3 ]'
     v 7 comment "$(body_file b2 $'A different first line.\nmore')"
-    check "#71-AC3.7 the same verdict with another first line is a new review" bash -c '[ "$(jq length "'"$STUB_DIR"'/reviews/7.json")" -eq 3 ]'
+    check "#71-AC3.7 the same verdict with another first line is a new review" bash -c '[ "$(jq length "'"$STUB_DIR"'/reviews/7.json")" -eq 4 ]'
     # the same words on a new head are a new review (the earlier one was of another commit)
     new_world
     put_pr 7
@@ -748,6 +889,27 @@ test_ac3_7_idempotence() {
     jq -nc --arg c "$sha_a" '[{id:1, user:{login:"someone-else"}, state:"COMMENTED", body:"Looks right.", commit_id:$c, html_url:"https://example.invalid/r/1"}]' >"$STUB_DIR/reviews/7.json"
     v 7 comment "$f"
     check "#71-AC3.7 another person's review with the same first line does not count" bash -c '[ '"$rc"' -eq 0 ] && [ "$(jq length "'"$STUB_DIR"'/reviews/7.json")" -eq 2 ]'
+}
+
+test_gh_err() {
+    # GH_ERR keeps no control character, ends on a character boundary, and does not outlive its call
+    local fake="$work/fakegh" out2
+    cat >"$fake" <<'FAKE'
+#!/usr/bin/env bash
+if [ "$1" = fail ]; then
+    printf 'gh: bad\033[31m thing\r\a\n' >&2
+    head -c 381 /dev/zero | tr '\0' y >&2
+    printf 'éééé (HTTP 422)' >&2
+    exit 1
+fi
+exit 0
+FAKE
+    chmod +x "$fake"
+    out2=$(env -i PATH="$PATH" HOME="$work/home" TICKET_TIMEOUT=5 bash -c '. "$1/gh-lib.sh"; gh_call one "$2" fail; printf "%s" "$GH_ERR" >"$3/err1"; gh_call two "$2" ok; printf "%s" "$GH_ERR" >"$3/err2"' _ "$tools" "$fake" "$work" 2>&1)
+    check "#71-AC3.3 GH_ERR is set and holds no control character" bash -c '! LC_ALL=C grep -qP "[\x00-\x08\x0b-\x1f\x7f]" "'"$work"'/err1" && [ -s "'"$work"'/err1" ]'
+    check "#71-AC3.3 GH_ERR is at most 400 bytes and valid UTF-8 (cut on a character boundary)" bash -c '[ "$(wc -c <"'"$work"'/err1")" -le 400 ] && iconv -f UTF-8 -t UTF-8 "'"$work"'/err1" >/dev/null'
+    check "#71-AC3.3 GH_ERR is cleared by the next call" bash -c '[ ! -s "'"$work"'/err2" ]'
+    check "#71-AC3.3 the library calls printed nothing" eq "$out2" ""
 }
 
 test_ac3_9_docs_and_lint() {
@@ -766,6 +928,7 @@ test_ac4_docs() {
     check "#71-AC4 pr-review documents status --branch <name> (as in the usage line)" grep -qF 'tools/pr.sh status --branch <name>' "$pr_review"
     check "#71-AC4 ticket-flow step 4 no longer lists the raw checks as a manual sequence" bash -c '! grep -q "that the PR.s head on GitHub equals the branch tip, that CI ran on that commit" "'"$ticket_flow"'"'
     check "#71-AC4 tools/tests/pr-tools.sh is listed in the gate job" grep -qF "tools/tests/pr-tools.sh" "$tools/../.github/workflows/build.yml"
+    check "#71-AC4 workflow.md's ready-to-merge definition names tools/pr.sh status" bash -c 'grep -F "Ready to merge" "'"$tools"'/../Docs/workflow.md" | grep -qF "tools/pr.sh status"'
     check "#71-AC4 tools/tests/pr-tools.sh is listed in workflow.md" grep -qF "tools/tests/pr-tools.sh" "$tools/../Docs/workflow.md"
 }
 
@@ -777,10 +940,10 @@ test_lint() {
     fi
 }
 
-for fn in test_ac1_facts test_ac1_1_inputs test_ac1_2_boundaries test_ac1_3_state test_ac1_5_concurrency test_ac1_6_partial \
+for fn in test_ac1_facts test_ac1_1_inputs test_ac1_2_boundaries test_ac1_3_state test_ac1_gate_source test_ac1_fork_and_pins test_ac1_5_concurrency test_ac1_6_partial \
     test_ac1_7_idempotence test_account test_ac1_9_environment test_ac1_10_observability test_ac2_exact test_ac2_1_inputs \
-    test_ac2_2_boundaries test_ac2_3_state test_ac2_6_partial test_ac3_flags test_ac3_1_inputs test_ac3_2_boundaries \
-    test_ac3_attribution test_ac3_3_state test_ac3_5_concurrency test_ac3_6_partial test_ac3_7_idempotence \
+    test_ac2_2_boundaries test_ac2_3_state test_ac2_closed_fork test_ac2_6_partial test_ac3_flags test_ac3_1_inputs test_ac3_2_boundaries \
+    test_ac3_attribution test_ac3_3_state test_ac3_5_concurrency test_ac3_6_partial test_ac3_6_last_attempt test_ac3_7_idempotence test_gh_err \
     test_ac3_9_docs_and_lint test_ac4_docs test_lint; do
     echo "== $fn"
     "$fn"
