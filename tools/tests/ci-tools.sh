@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016,SC2181  # fixtures hold literal ${{ }} expressions; $? is read right after the command it judges
-# Fixture tests for tools/ci-gate.sh and tools/ci-release-run.sh. Everything happens in a temporary directory.
+# Fixture tests for tools/ci-gate.sh, tools/ci-release-run.sh, tools/check-action-pins.sh and
+# tools/check-workflow-permissions.sh (plus the pin, permission and runner rules of the repository's own workflows). Everything happens in a temporary directory.
 # Usage: tools/tests/ci-tools.sh
 set -uo pipefail
 
@@ -301,7 +302,8 @@ pin_bad "#83-AC1.1" "a | block" $'      - uses: |\n          actions/checkout@'"
 pin_bad "#83-AC1.1" "a > block" $'      - uses: >\n          actions/checkout@'"$s40 # v4.4.0" ">"
 pin_bad "#83-AC1.1" "the value on the next line" $'      - uses:\n          actions/checkout@'"$s40 # v4.4.0" "<empty>"
 pin_bad "#83-AC1.1" "an owner without a repository" "      - uses: checkout@$s40 # v4.4.0" "checkout@$s40"
-pin_bad "#83-AC1.1" "a uses key after a name key, unpinned" $'      - name: Checkout\n        uses: actions/checkout@v4' "actions/checkout@v4"
+pin_case "#83-AC1.1" "a uses key after a name key, unpinned" 1 $'      - name: Checkout\n        uses: actions/checkout@v4' \
+    "$W:10: actions/checkout@v4"
 # the line printed is the one with the problem, wherever it is
 newroot
 printf '%s\n%s\n' "$HDR" $'      - uses: actions/checkout@'"$s40"$' # v4.4.0\n      - run: echo hi\n      - uses: actions/setup-node@v4\n      - uses: actions/cache@main' >"$R/$W"
@@ -352,7 +354,7 @@ require "#83-AC1.7" "two runs print the same, and the file is untouched" "$([ "$
 for script in "$pins" "$perms"; do
     name="$(basename "$script")"
     require "#83-AC1.9" "$name starts with #!/bin/sh" "$([ "$(head -1 "$script")" = '#!/bin/sh' ] && echo 0 || echo 1)"
-    grep -nE '\[\[|grep[[:space:]]+(-[a-zA-Z]*P|--perl)|<<<|<\(' "$script" >/dev/null
+    grep -nE '\[\[[[:space:]]|grep[[:space:]]+(-[a-zA-Z]*P|--perl)|<<<|<\(' "$script" >/dev/null
     require "#83-AC1.9" "$name has no bashism and no grep -P" "$([ $? -ne 0 ] && echo 0 || echo 1)"
 done
 
@@ -411,6 +413,7 @@ $W: job b: no permissions block" $'on: push\njobs:\n  a:\n    runs-on: ubuntu-24
 perm_case "#83-AC3.1" "a job with write-all" 1 "$W: job a: permissions: write-all is not allowed" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: write-all\n    steps:\n      - run: echo hi'
 perm_case "#83-AC3.1" "a permissions key of a step input is not the job's block" 1 "$W: job a: no permissions block" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: ./x\n        with:\n          permissions: contents: read'
 perm_case "#83-AC3.1" "a permissions key only inside a job is not the top level" 1 "$W: top level: permissions must be {} (found: no permissions key)" $'on: push\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: {}\n    steps:\n      - run: echo hi'
+perm_case "#83-AC3.1" "a job block with nothing in it" 1 "$W: job a: permissions block is empty (write {} to grant nothing)" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions:\n    steps:\n      - run: echo hi'
 perm_case "#83-AC3.2" "a single job with its block" 0 '' $'on: push\npermissions: {}\njobs:\n  only:\n    runs-on: ubuntu-24.04\n    permissions:\n      contents: read\n    steps:\n      - run: echo hi'
 perm_case "#83-AC3.2" "a single job without a block" 1 "$W: job only: no permissions block" $'on: push\npermissions: {}\njobs:\n  only:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi'
 newroot

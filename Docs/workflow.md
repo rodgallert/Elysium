@@ -192,6 +192,28 @@ Check these on your own branch first; the review checks them again. Items that d
 - [ ] **Decisions recorded:** any decision the ticket needed (a number, a rule, a choice between options) is written in a tracked document (the relevant decision log, `Docs/` or `ROADMAP.md`) or on the issue, and linked from the spec, before the work relies on it; never only in the PR or in untracked notes.
 - [ ] **Deferred work tracked:** work you chose not to do in this PR is a task in `ROADMAP.md` or a GitHub issue, not a comment in the code.
 
+## Pinned actions, default permissions and runners
+
+Workflows run with the repository's credentials and can attest and publish, so what they pull in and what they may do is fixed in the files and checked on every change (the Hardening epic, #63; threat: a compromised or retagged action reaching CI). The rules, for every file under `.github/workflows/` and `.github/actions/`:
+
+1. **Every action is pinned to a full commit SHA, with its version as a comment:** `uses: actions/checkout@<40 lowercase hex> # v4.4.0`. A local action (`uses: ./.github/actions/<name>`) needs neither. No tag, branch, short or uppercase SHA, `docker://` reference, quoted value or `uses:` split over lines.
+2. **`permissions: {}` at the top of each workflow, and a `permissions:` block on every job** with only the grants that job uses (`contents: read` for a checkout, `packages: write`, `id-token: write` and `attestations: write` only where something is pushed or signed; `permissions: {}` is a valid job block). A new job that forgets its block fails the check, so it never inherits more than it asks for. `checks: write` and `statuses: write` are granted nowhere: they are what would let a workflow post a `gate` result of its own (see "Required check").
+3. **Every `runs-on:` is `ubuntu-24.04`**: not `ubuntu-latest` (GitHub moves it to a newer image, as it did to 26.04 in November 2026, and a moved label changes the toolchain under every job), no other label, no list, no expression.
+
+`tools/check-action-pins.sh` checks rules 1 and 3 and `tools/check-workflow-permissions.sh` rule 2; both read files only (no network, so they cannot see an action commit deleted upstream, which fails the job at the download), run under `/bin/sh` (dash on Ubuntu) and print one line per offender, `<file>:<line>: <ref>` or `<file>: job <name>: <problem>`. The `action-pins` job of `build.yml` runs both on every change that touches more than Markdown (it checks the whole tree, not only the files the change touches), and `gate` requires it: a Markdown-only change skips the job like the other build jobs and `gate` accepts that skip (`tools/ci-gate.sh`), while a code change where it fails, was skipped or didn't run fails the gate. Their fixture tests are in `tools/tests/ci-tools.sh`, which the gate job runs.
+
+**Repository setting (the PO sets it once):** Settings → Actions → General → "Require actions to be pinned to a full-length commit SHA" on. Then a workflow that references an unpinned action fails when it starts, on every branch, so a branch that still has a tag reference fails even if nobody runs `action-pins`; and a tag named like a 40-character hex, which the offline check cannot tell from a commit, is refused at run time. Read it with `gh api repos/rodgallert/Elysium/actions/permissions` (`sha_pinning_required: true`). Turn it on only once `main` has the pins, and update open branches afterwards, since a branch's run uses its own workflow files.
+
+**Updates:** `.github/dependabot.yml` has the `github-actions` ecosystem: one pull request a week for all action updates (a group), at most 5 open, and a 14-day cooldown on new versions (security updates skip the cooldown); nothing is merged automatically, and a Dependabot PR gets a read-only token and no secrets. It reads `.github/workflows/`; the other ecosystems join the same file in #34.
+
+**Bumping a pin by hand** (a Dependabot PR is the normal way; do this when one is not enough):
+1. Pick the release tag, preferably one at least 14 days old, and read its changes.
+2. Resolve the commit it points to: `gh api repos/<owner>/<repo>/git/ref/tags/<tag> --jq '.object.type, .object.sha'`. If the type is `tag` (an annotated tag), the SHA is the tag object: follow it with `gh api repos/<owner>/<repo>/git/tags/<sha> --jq .object.sha` until the type is `commit`. A tag object's SHA is not a commit, so pinning it makes the run fail when it downloads the action.
+3. Replace the old SHA and the version comment everywhere the action is used (`grep -rn '<owner>/<repo>@' .github`); an action used in several files moves together.
+4. Run `tools/check-action-pins.sh` and `tools/check-workflow-permissions.sh` (no output, exit 0), and the PR's own run is the proof the new version works.
+
+**The runner image has an end date.** GitHub supports two GA Ubuntu images at a time and begins deprecating the oldest one when a new LTS image reaches GA: an announcement with the retirement date, scheduled brownouts (jobs on the image fail on set days), then removal; `ubuntu-22.04` is on that path now (deprecation from 2026-09-17, unsupported from 2027-04-17). No date has been announced for `ubuntu-24.04` (checked 2026-11-24). It is tracked by reading the image list and the announcements of `actions/runner-images` (the README's deprecation policy and the pinned announcements) whenever a new Ubuntu image appears and when jobs fail on the label; Dependabot's cooldown does not cover runner labels. Moving to the next image is one change of every `runs-on:` and of the label in `tools/check-action-pins.sh`, with the PR's run on the new image as the proof.
+
 ## Releases (per release part)
 
 ### Versions and release parts
