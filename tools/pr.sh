@@ -93,7 +93,7 @@ read_tip() {
 }
 
 cmd_status() {
-    local n="$1" state base ref sha hrepo body first tip first_tip behind gate runs closes fail="" TIPSHA=""
+    local n="$1" state base ref sha hrepo body first tip first_tip behind gate runs jobs closes fail="" TIPSHA=""
     read_pr "$n"
     state="$(pr_state)"
     base="$(jq -r '.base.ref // ""' <<<"$PR")"
@@ -126,14 +126,20 @@ cmd_status() {
     behind="$(jq -r '.behind_by // empty' <<<"$GH_OUT")"
     [[ "$behind" =~ ^[0-9]+$ ]] || die "compare the head with its base: unexpected answer"
 
-    # the gate is the check run named gate of GitHub Actions (app 15368) in a run of build.yml on this commit; every such
-    # run must have succeeded, so another workflow's job with the same name can neither add nor hide a failure
+    # the gate is the check run named gate of GitHub Actions (app 15368) whose id is the id of a job named gate in a run of
+    # build.yml on this commit (an Actions job id is its check run's id; a check run made up through the API has no such
+    # job); every such run must have succeeded, so another workflow's job with the same name can neither add nor hide one
     must "read the build workflow's runs on the head" gh api "repos/$repo/actions/workflows/build.yml/runs?head_sha=$sha&per_page=100" --paginate
     runs="$(jq -s -c '[.[].workflow_runs[]?.id]' <<<"$GH_OUT")" || die "read the build workflow's runs on the head: unexpected answer"
+    jobs="[]"
+    for run in $(jq -r '.[]' <<<"$runs"); do
+        [[ "$run" =~ ^[0-9]+$ ]] || die "read the build workflow's runs on the head: unexpected answer"
+        must "read the jobs of run $run" gh api "repos/$repo/actions/runs/$run/jobs?per_page=100" --paginate
+        jobs="$(jq -s -c --argjson prev "$jobs" '$prev + [.[].jobs[]? | select(.name == "gate") | .id]' <<<"$GH_OUT")" || die "read the jobs of run $run: unexpected answer"
+    done
     must "read the checks of the head" gh api "repos/$repo/commits/$sha/check-runs?per_page=100" --paginate
-    gate="$(jq -s -r --arg sha "$sha" --argjson runs "$runs" '
-        def runid: ((.details_url // "") | capture("/actions/runs/(?<r>[0-9]+)/") | .r | tonumber)?;
-        [.[].check_runs[]? | select(.name == "gate" and (.app.id // 0) == 15368 and .head_sha == $sha and (runid as $r | any($runs[]; . == $r)))] as $g
+    gate="$(jq -s -r --arg sha "$sha" --argjson jobs "$jobs" '
+        [.[].check_runs[]? | select(.name == "gate" and (.app.id // 0) == 15368 and .head_sha == $sha and (.id as $i | any($jobs[]; . == $i)))] as $g
         | ([$g[] | select(.status == "completed" and .conclusion != "success")] | first) as $bad
         | if ($g | length) == 0 then "none"
           elif $bad != null then ($bad.conclusion // "failure")
@@ -211,8 +217,10 @@ cmd_verdict() {
         echo "pr.sh: the body has $chars characters; GitHub accepts at most $max_body" >&2
         exit 1
     fi
-    # a line that is a tool attribution, however decorated (Markdown emphasis, quote, list, HTML tag, robot emoji)
-    if LC_ALL=C grep -qiE '^([[:space:]>*_~+#|`-]|<[^>]*>|🤖)*(Generated with|Co-Authored-By[[:space:]]*:)' "$file"; then
+    # a line that is a tool attribution, however decorated: each line is reduced to lower-case letters, digits, hyphens and single
+    # spaces (HTML tags removed first, so Markdown marks, links, list numbers, emoji and variation selectors all drop out)
+    if LC_ALL=C tr 'A-Z\t\r' 'a-z  ' <"$file" | LC_ALL=C sed -E 's/<[^>]*>//g; s/[^a-z0-9 -]//g; s/ +/ /g; s/^[- ]+//; s/^[0-9]+ +//; s/^[- ]+//' |
+        grep -qE '^(generated with|co-authored-by)( |$)'; then
         echo "pr.sh: the body has a tool-attribution line (Generated with, Co-Authored-By): remove it" >&2
         exit 1
     fi

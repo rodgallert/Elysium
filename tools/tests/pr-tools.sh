@@ -251,7 +251,7 @@ test_ac1_2_boundaries() {
     new_world
     ready_pr 7
     put_checks "$sha_a" "$(jq -nc --arg h "$sha_a" '[range(0; 140) | {id: (. + 10), name: ("check-" + tostring), status: "completed", conclusion: "success", head_sha: $h}]
-        + [{id: 1000, name: "gate", app: {id: 15368}, details_url: "https://github.com/rodgallert/Elysium/actions/runs/9001/job/1", status: "completed", conclusion: "success", head_sha: $h}]
+        + [{id: 9, name: "gate", app: {id: 15368}, details_url: "https://github.com/rodgallert/Elysium/actions/runs/9001/job/1", status: "completed", conclusion: "success", head_sha: $h}]
         + [range(0; 9) | {id: (. + 2000), name: ("late-" + tostring), status: "completed", conclusion: "success", head_sha: $h}]')"
     p status 7
     check "#71-AC1.2 150 checks, gate on the second page: found, exit 0" rc_is 0
@@ -383,8 +383,10 @@ test_ac1_gate_source() {
     ready_pr 7
     mkdir -p "$STUB_DIR/wruns"
     echo '[{"id":8000}]' >"$STUB_DIR/wruns/$sha_a.json"
+    mkdir -p "$STUB_DIR/jobs"
+    echo '[{"id":2,"name":"changes"}]' >"$STUB_DIR/jobs/8000.json"
     p status 7
-    check "#71-AC1.2 build.yml has no run 9001 on this SHA: the gate does not count, gate: none" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: none" <<<"$1"' _ "$out"
+    check "#71-AC1.2 the only build.yml run on this SHA (8000) has no gate job: the check run named gate does not count, gate: none" bash -c '[ '"$rc"' -eq 1 ] && grep -q "^gate: none" <<<"$1"' _ "$out"
     new_world
     ready_pr 7
     put_checks "$sha_a" "[$(gate_obj "$sha_b" completed success)]"
