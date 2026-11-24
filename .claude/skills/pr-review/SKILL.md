@@ -17,7 +17,10 @@ Review one pull request and post the result on it, the same way every time. The 
 gh pr view <n> -R rodgallert/Elysium --json number,title,body,baseRefName,headRefName,headRefOid,files,commits,url
 gh pr diff <n> -R rodgallert/Elysium
 gh pr checks <n> -R rodgallert/Elysium
+tools/pr.sh status <pr>
 ```
+
+`tools/pr.sh status <pr>` prints the PR's facts (state, branches, head SHA, whether the head equals the branch tip, whether it is up to date with its base, the `gate` conclusion on that SHA, the `Closes` line) and exits 0 only when all are in order; to find a PR from a branch name use `tools/pr.sh status --branch <name>`, which matches the exact head branch of this repository (never a prefix or a similar name).
 
 Then work out the **review level** from the branches (`Docs/workflow.md`):
 

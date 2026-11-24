@@ -23,6 +23,7 @@ TICKET_TIMEOUT="${TICKET_TIMEOUT:-30}"
 GH_OUT=""
 GH_KIND=""
 GH_MSG=""
+GH_ERR=""
 GH_VERIFY=""
 
 die() { # one line on stderr, exit 1
@@ -58,12 +59,13 @@ gh_init() {
 # gh_call <step> <command...>: runs the command (gh, or a script that calls gh) with a timeout and retries a 5xx, a rate
 # limit or a timeout up to 3 times (2 s, 4 s, 8 s, or the Retry-After / reset time, at most 60 s). On success GH_OUT holds
 # stdout. On failure it returns 1 with GH_KIND (notfound, perm, ratelimit, server, timeout, other) and GH_MSG, one line
-# naming the step and the HTTP status, never the token or the request. A function named in GH_VERIFY is run before each
+# naming the step and the HTTP status, never the token or the request; GH_ERR holds gh's own error text (at most 400 bytes). A function named in GH_VERIFY is run before each
 # retry: when it succeeds the earlier attempt did take effect and the call counts as done (no duplicate writes).
 gh_call() {
     local step="$1" attempt=0 rc text status wait ra reset errf verify="$GH_VERIFY"
     shift
     GH_VERIFY=""
+    GH_ERR=""
     errf=$(mktemp) || die "mktemp failed"
     while :; do
         GH_OUT=$(timeout -k 2 "$TICKET_TIMEOUT" "$@" 2>"$errf" </dev/null)
@@ -75,6 +77,9 @@ gh_call() {
         fi
         text="$(cat "$errf")
 $GH_OUT"
+        # shellcheck disable=SC2034 # read by the scripts that source this file
+        # what gh said, for a caller that reports the reason: no control characters, at most 400 bytes, cut on a character boundary
+        GH_ERR=$(tr -d '\000-\010\013-\037\177' <"$errf" | tr '\n' ' ' | head -c 400 | iconv -c -f UTF-8 -t UTF-8 2>/dev/null)
         status=$(grep -oE 'HTTP [0-9]{3}' <<<"$text" | head -1 | cut -d' ' -f2)
         if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
             GH_KIND=timeout

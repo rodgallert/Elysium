@@ -6,7 +6,12 @@
 #
 # State ($STUB_DIR): issue/<n>.json (REST shape), comments/<n>.json (with user and created_at), edits/<n>.json (userContentEdits
 # nodes, newest first, each `diff` the whole body of that revision as GitHub returns it), linked (issue<TAB>branch),
-# pr/<n>.json, branches (one name per line), board/<n> (Status), faults, failnth.
+# pr/<n>.json (REST pull shape; pr/<n>.sha2 holds the head SHA the PR switches to from its second read on), branches
+# (one name per line), tips (repo<TAB>branch<TAB>sha[<TAB>ref the answer carries]: the branch tips tools/pr.sh reads; tips2 holds the tips from
+# the second read of a branch on), tags (names of tags: a short base name in a compare resolves to the tag, a wrong answer),
+# wruns/<sha>.json (the build workflow's runs for a SHA, default id 9001), jobs/<run>.json (a run's jobs; by default the gate
+# jobs with ids 1, 5 and 9), behind/<sha> (how far a head is
+# behind its base), checks/<sha>.json (check runs of a commit), reviews/<n>.json, board/<n> (Status), faults, failnth.
 # Faults, one per line in $STUB_DIR/faults: <glob over the joined arguments><TAB><times><TAB><mode>[<TAB>after]
 #   modes: 502, rl-secondary:<seconds>, rl-primary, perm, 404, hang. With "after" the call's effect happens first and
 #   the failure is reported anyway (a request that succeeded but whose answer was lost).
@@ -100,6 +105,11 @@ setissue() { # <n> <jq filter...>
     shift
     jq -c "$@" "issue/$n.json" >"issue/$n.tmp" && mv "issue/$n.tmp" "issue/$n.json"
 }
+setpr() { # <n> <jq filter...>
+    local n="$1"
+    shift
+    jq -c "$@" "pr/$n.json" >"pr/$n.tmp" && mv "pr/$n.tmp" "pr/$n.json"
+}
 statuses="Backlog|Ready|In progress|In review|Ready to Merge|Done"
 
 # api <path> [-X METHOD] [--input FILE] [-F|-f key=value]... [--paginate] [-q|--jq expr]
@@ -119,6 +129,8 @@ api() {
         esac
         i=$((i + 1))
     done
+    local query=""
+    case "$path" in *\?*) query="${path#*\?}" ;; esac
     path="${path%%\?*}"
     case "$path" in
         user) echo '{"login":"rodgallert"}' ;;
@@ -183,14 +195,100 @@ api() {
             fi
             ;;
         "repos/$repo/milestones") echo '[{"number":3,"title":"Workflow v1"},{"number":4,"title":"Masquerade v0.1"}]' ;;
+        "repos/$repo/pulls")
+            local want=open head="" kv
+            for kv in ${query//&/ }; do
+                case "$kv" in
+                    state=*) want="${kv#state=}" ;;
+                    head=*) head="${kv#head=}" ;;
+                esac
+            done
+
+            ls pr/*.json >/dev/null 2>&1 || { echo '[]'; return 0; }
+            jq -sc --arg w "$want" --arg h "$head" --arg ignore "${STUB_PULLS_IGNORE_HEAD:-0}" '[.[] | select(($w == "all" or .state == $w)
+                and ($h == "" or $ignore == "1" or ((.head.repo.full_name | split("/")[0]) + ":" + .head.ref) == $h))]' pr/*.json
+            ;;
+        "repos/$repo/pulls/"*/reviews)
+            local n="${path#repos/$repo/pulls/}"
+            n="${n%/reviews}"
+            if [ "$method" = POST ]; then
+                [ -f "pr/$n.json" ] || fail 404
+                local ev
+                ev=$(jq -r '{APPROVE:"APPROVED", REQUEST_CHANGES:"CHANGES_REQUESTED", COMMENT:"COMMENTED"}[.event] // empty' "$input")
+                [ -n "$ev" ] || { echo "gh: Unprocessable Entity (HTTP 422)" >&2; exit 1; }
+                if [ "$ev" = APPROVED ] && [ "$(jq -r .user.login "pr/$n.json")" = rodgallert ]; then
+                    echo "gh: Unprocessable Entity: Can not approve your own pull request (HTTP 422)" >&2
+                    exit 1
+                fi
+                write review
+                [ -f "reviews/$n.json" ] || { mkdir -p reviews; echo '[]' >"reviews/$n.json"; }
+                local id=$((7000 + $(jq length "reviews/$n.json")))
+                jq -c --argjson id "$id" --arg ev "$ev" --slurpfile i "$input" --arg url "https://github.com/$repo/pull/$n#pullrequestreview-$id" \
+                    '. + [{id:$id, user:{login:"rodgallert"}, state:$ev, body:$i[0].body, commit_id:$i[0].commit_id, html_url:$url}]' "reviews/$n.json" >"reviews/$n.tmp" &&
+                    mv "reviews/$n.tmp" "reviews/$n.json"
+                jq -c '.[-1]' "reviews/$n.json"
+            else
+                jq -c . "reviews/$n.json" 2>/dev/null || echo "[]"
+            fi
+            ;;
+        "repos/$repo/actions/runs/"*/jobs)
+            local rid="${path#repos/$repo/actions/runs/}"
+            rid="${rid%/jobs}"
+            jq -nc --slurpfile j <(cat "jobs/$rid.json" 2>/dev/null || echo '[{"id":1,"name":"gate"},{"id":5,"name":"gate"},{"id":9,"name":"gate"},{"id":2,"name":"changes"}]') '{total_count: ($j[0] | length), jobs: $j[0]}'
+            ;;
+        "repos/$repo/actions/workflows/build.yml/runs")
+            local hs="" kv
+            for kv in ${query//&/ }; do
+                case "$kv" in head_sha=*) hs="${kv#head_sha=}" ;; esac
+            done
+            jq -nc --slurpfile r <(cat "wruns/$hs.json" 2>/dev/null || echo '[{"id":9001}]') '{total_count: ($r[0] | length), workflow_runs: $r[0]}'
+            ;;
         "repos/$repo/pulls/"*)
             local n="${path#repos/$repo/pulls/}"
             [ -f "pr/$n.json" ] || fail 404
+            local reads
+            reads=$(($(cat "pr/$n.reads" 2>/dev/null || echo 0) + 1))
+            echo "$reads" >"pr/$n.reads"
+            if [ "$reads" -ge 2 ] && [ -f "pr/$n.sha2" ]; then
+                setpr "$n" --arg s "$(cat "pr/$n.sha2")" '.head.sha = $s'
+            fi
             jq -c . "pr/$n.json"
             ;;
-        "repos/$repo/git/ref/heads/"*)
-            grep -qxF "${path#repos/$repo/git/ref/heads/}" branches 2>/dev/null || fail 404
-            echo '{"ref":"ok"}'
+        "repos/$repo/compare/"*)
+            local spec="${path#repos/$repo/compare/}" cb sha behind
+            cb="${spec%%...*}"
+            sha="${spec##*...}"
+            behind=$(cat "behind/$sha" 2>/dev/null || echo 0)
+            # a short name that is also a tag names the tag: a wrong answer a full refname avoids
+            if [ "${cb#refs/heads/}" = "$cb" ] && grep -qxF "$cb" tags 2>/dev/null; then behind=99; fi
+            echo "{\"behind_by\":$behind,\"ahead_by\":1}"
+            ;;
+        "repos/"*/*/commits/*/check-runs)
+            local sha="${path#repos/*/*/commits/}"
+            sha="${sha%/check-runs}"
+            jq -c --argjson size "${STUB_PAGE:-100}" '. as $all | [range(0; ([length, 1] | max); $size)] | .[] |
+                {total_count: ($all | length), check_runs: $all[.:(. + $size)]}' "checks/$sha.json" 2>/dev/null ||
+                echo '{"total_count":0,"check_runs":[]}'
+            ;;
+        "repos/$repo/git/ref/heads/"* | "repos/"*/*/git/ref/heads/*)
+            local rr="${path#repos/}" br
+            rr="${rr%%/git/ref/heads/*}"
+            br="${path#*/git/ref/heads/}"
+            if [ -f tips ]; then
+                local sha
+                local tf=tips reads
+                reads=$(($(cat "tips.reads" 2>/dev/null | grep -cxF "$rr $br") + 1))
+                echo "$rr $br" >>tips.reads
+                if [ "$reads" -ge 2 ] && [ -f tips2 ] && awk -F'\t' -v r="$rr" -v b="$br" '$1 == r && $2 == b {f = 1} END {exit !f}' tips2; then tf=tips2; fi
+                sha=$(awk -F'\t' -v r="$rr" -v b="$br" '$1 == r && $2 == b {print $3}' "$tf" | tail -1)
+                [ -n "$sha" ] || fail 404
+                local carried
+                carried=$(awk -F'\t' -v r="$rr" -v b="$br" '$1 == r && $2 == b {print $4}' "$tf" | tail -1)
+                jq -nc --arg r "${carried:-refs/heads/$br}" --arg s "$sha" '{ref:$r, object:{sha:$s, type:"commit"}}'
+            else
+                grep -qxF "$br" branches 2>/dev/null || fail 404
+                echo '{"ref":"ok"}'
+            fi
             ;;
         *)
             echo "stub gh: unexpected api path: $path" >&2

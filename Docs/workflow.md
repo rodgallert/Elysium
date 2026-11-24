@@ -173,7 +173,7 @@ A ticket that only changes docs skips the build, the boundary check, the code re
 
 The review results go in the PR description. A review that finds problems sends the work back to the ticket (fix it on the same branch before merging, or open a new `fix/` ticket after). The merge only happens once the review is clean **and the PO has approved it**.
 
-**Ready to merge** means all of these, checked right before saying so: nobody is still working on the PR, the PR's head on GitHub equals the branch tip, CI is green on that commit, and the description has been re-read.
+**Ready to merge** means all of these, checked right before saying so: nobody is still working on the PR, the PR's head on GitHub equals the branch tip, CI is green on that commit (`tools/pr.sh status <pr>` checks the head, the tip, up to date, the `gate` check and the `Closes` line in one run), and the description has been re-read.
 
 ## Before you open a PR
 
@@ -261,7 +261,7 @@ Actions → Release → Run workflow, mode `dry-run`, any part and branch (a ser
 
 `main` and `release/**` require one status check, `gate` (the last job of `.github/workflows/build.yml`), so a PR with red CI can't be merged. It's one job with one name because no build job could be the required check: the `frontends (<path>)` jobs change name whenever an app is added, renamed or removed, and GitHub counts a skipped required check as passing, so a build job skipped on a Markdown-only change (or because a job it needs failed) would let the PR through. The gate runs on every change (`if: always()`), so a failed or cancelled job is reported as a failed gate rather than left pending.
 
-What `gate` checks (`tools/ci-gate.sh`; its fixture tests, `tools/tests/ci-tools.sh`, the Prince `.env` check's tests, `tools/tests/env-check.sh`, and the ticket script's tests, `tools/tests/ticket-tools.sh`, run in the gate job first). The `changes` job (`tools/ci-code-changed.sh`) decides whether the change touches anything besides Markdown; there is no `paths-ignore` filter, because a filtered workflow never reports:
+What `gate` checks (`tools/ci-gate.sh`; its fixture tests, `tools/tests/ci-tools.sh`, the Prince `.env` check's tests, `tools/tests/env-check.sh`, the ticket script's tests, `tools/tests/ticket-tools.sh`, and the PR script's tests, `tools/tests/pr-tools.sh`, run in the gate job first). The `changes` job (`tools/ci-code-changed.sh`) decides whether the change touches anything besides Markdown; there is no `paths-ignore` filter, because a filtered workflow never reports:
 
 | Case | Gate result |
 |---|---|
