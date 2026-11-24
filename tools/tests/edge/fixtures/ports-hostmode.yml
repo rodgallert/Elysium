@@ -1,0 +1,5 @@
+# Fixture of tools/tests/edge.sh: no `ports` at all, but network_mode: host listens on every interface of the machine
+services:
+  web:
+    image: nginx:1.30-alpine@sha256:3bc3836dc0be3b811f238210360bf8e7ca8a2d0effdae46160bf1f3578710051
+    network_mode: host

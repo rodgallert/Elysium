@@ -1,0 +1,13 @@
+# Fixture of tools/tests/edge.sh (#75-AC1.5, AC1.6): a stack that joins the edge network the way Prince does (external).
+# Run only through the test script, which sets ECHO_IMAGE.
+name: elysium-edgetest-stack
+services:
+  proxy:
+    image: ${ECHO_IMAGE}
+    networks:
+      elysium-edge:
+        aliases: [prince-prod-proxy]
+networks:
+  elysium-edge:
+    external: true
+    name: elysium-edge

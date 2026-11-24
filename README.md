@@ -62,6 +62,7 @@ Elysium is built in the open. I design it and write code myself, alongside AI co
 Today the runnable part is Prince. With Docker and Docker Compose installed:
 
 ```bash
+docker compose -f Edge/docker-compose.yml up -d --wait
 cd Prince
 cp .env.example .env
 docker compose up -d --wait
@@ -69,7 +70,9 @@ docker compose up -d --wait
 
 A one-shot `env-check` refuses invalid `.env` values before the services that need the secrets start; `docker compose logs env-check` names the variable. See [Prince's README](Prince/README.md) for what comes up and where.
 
-Next is the Environments plan, in progress and not built yet: separate production and development stacks behind one edge proxy that listens on loopback only, at `prince.localhost` and `prince.dev.localhost` (and later one hostname per app). The design is in [`Docs/environments-design.md`](Docs/environments-design.md).
+Prince is reached through the edge proxy, the only thing that publishes a host port (`127.0.0.1` and `[::1]`, port 80), which the first command above starts before the stack. Open `http://prince.localhost/vue/`.
+
+Next in the Environments plan: separate production and development stacks behind that edge, at `prince.localhost` and `prince.dev.localhost` (and later one hostname per app). The design is in [`Docs/environments-design.md`](Docs/environments-design.md); the edge itself is in [`Edge/`](Edge/README.md).
 
 ## Status
 

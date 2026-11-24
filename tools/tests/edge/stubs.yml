@@ -1,0 +1,26 @@
+# Fixture of tools/tests/edge.sh: two stand-ins for the stacks' entry proxies, named as the aliases the edge routes to, on
+# the edge's network. Run only through the test script (it sets ECHO_IMAGE and gives the project its own name).
+# Nothing here is published on a host port.
+x-echo: &echo
+  image: ${ECHO_IMAGE}
+  volumes:
+    - ./echo.conf.template:/etc/nginx/templates/default.conf.template:ro,z
+
+services:
+  prod:
+    <<: *echo
+    environment: { BACKEND_NAME: prod }
+    networks:
+      elysium-edge:
+        aliases: [prince-prod-proxy]
+  dev:
+    <<: *echo
+    environment: { BACKEND_NAME: dev }
+    networks:
+      elysium-edge:
+        aliases: [prince-dev-proxy]
+
+networks:
+  elysium-edge:
+    external: true
+    name: elysium-edge

@@ -1,0 +1,31 @@
+# Fixture upstream of tools/tests/edge.sh: stands in for a stack's entry proxy. Answers every request with one line that names
+# it and what it received, so the test can see exactly what the edge forwarded. nginx's entrypoint fills in BACKEND_NAME.
+server {
+    listen 80;
+    client_max_body_size 20m;
+    absolute_redirect off;
+
+    # headers the edge must not double (#75-AC4.6) and a cookie it must not rewrite (#75-AC4.8)
+    location = /dup {
+        add_header X-Frame-Options SAMEORIGIN always;
+        add_header X-Content-Type-Options sniff always;
+        add_header Referrer-Policy unsafe-url always;
+        add_header Content-Security-Policy-Report-Only "default-src *" always;
+        add_header Set-Cookie "sid=1; Path=/; HttpOnly" always;
+        default_type text/plain;
+        return 200 "backend=${BACKEND_NAME} request=$request\n";
+    }
+
+    location = /missing {
+        return 404;
+    }
+
+    location = /redir {
+        return 302 /redirected;
+    }
+
+    location / {
+        default_type text/plain;
+        return 200 "backend=${BACKEND_NAME} request=$request host=$http_host xff=$http_x_forwarded_for xfh=$http_x_forwarded_host proto=$http_x_forwarded_proto xri=$http_x_real_ip upgrade=$http_upgrade connection=$http_connection cookie=$http_cookie auth=$http_authorization len=$http_content_length xfp=$http_x_forwarded_prefix xfport=$http_x_forwarded_port xfs=$http_x_forwarded_server xou=$http_x_original_url xru=$http_x_rewrite_url\n";
+    }
+}
