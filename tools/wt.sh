@@ -25,6 +25,10 @@
 set -uo pipefail
 export LC_ALL=C
 unset CDPATH
+# git's own environment (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, ... as set inside a hook) would point every git call at
+# another repository or at the main copy instead of the worktree it is about
+# shellcheck disable=SC2046 # the list of names is meant to split
+unset $(git rev-parse --local-env-vars 2>/dev/null)
 
 name_of_script=wt.sh
 usage() {
@@ -227,11 +231,13 @@ do_add() {
     if [ "$new" -eq 1 ]; then
         if [ "$have_local" -eq 1 ] || [ "$have_remote" -eq 1 ]; then refuse "$shown: the branch already exists, so --new cannot create it (drop --new to check it out)"; fi
         gitr show-ref --verify --quiet refs/remotes/origin/main || refuse "$shown: origin/main not found: run git fetch origin first"
-        args=(worktree add --no-track -b "$b" -- "$path" origin/main)
+        args=(worktree add --no-track -b "$b" -- "$path" refs/remotes/origin/main)
     elif [ "$have_local" -eq 1 ]; then
+        # git reads a bare name as a tag before a branch, so a tag of the same name would be checked out in its place
+        if gitr show-ref --verify --quiet "refs/tags/$b"; then refuse "$shown: a tag named $shown exists, so git cannot tell it from the branch; delete or rename the tag"; fi
         args=(worktree add -- "$path" "$b")
     elif [ "$have_remote" -eq 1 ]; then
-        args=(worktree add --track -b "$b" -- "$path" "origin/$b")
+        args=(worktree add --track -b "$b" -- "$path" "refs/remotes/origin/$b")
     else
         refuse "$shown: the branch does not exist (locally or as origin/$shown); use --new to create it from origin/main"
     fi
