@@ -195,7 +195,7 @@ codeowners_effective() { # stdin: the file. Prints, per guarded path, "ok|<path>
             for (i = 1; i <= n; i++) {
                 p = P[i]; q = p; sub(/\/$/, "", q)
                 if (pat == p || pat == q || pat == "*" || pat == "**" || pat == "/" || pat == "/*" || pat == "/**" ||
-                    substr(pat, 1, length(p)) == p || (pat ~ /\/$/ && index(p, pat) == 1)) {
+                    substr(pat, 1, length(p)) == p || (pat ~ /\/$/ && index(p, pat) == 1) || index(p, pat "/") == 1) {
                     last[i] = $0; lastnames[i] = names; risk[i] = ""
                 } else if (risky && (i in last) && !names && risk[i] == "") risk[i] = $0
             }
