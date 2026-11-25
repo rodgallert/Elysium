@@ -796,8 +796,8 @@ test_ac3_symlinks() {
     ln -s "$work/outside$n" "$wtd/feat-l"
     w rm feat/l
     check "#72-AC3.1 a symlink to a directory outside refuses (exit 1)" rc_is 1
-    check "#72-AC3.1 a symlink out: prints the resolved path" says "$work/outside$n"
-    check "#72-AC3.1 a symlink out: prints the directory it must be under" says "$wtd"
+    check "#72-AC3.10 a symlink out: prints the resolved path" says "$work/outside$n"
+    check "#72-AC3.10 a symlink out: prints the directory it must be under" says "$wtd"
     check "#72-AC3.1 a symlink out: deletes nothing there" eq "$(cat "$work/outside$n/keep")" precious
     check "#72-AC3.1 a symlink out: the link stays" test -L "$wtd/feat-l"
     local first
@@ -813,7 +813,7 @@ test_ac3_symlinks() {
     ln -s "$root" "$wtd/feat-l"
     w rm feat/l
     check "#72-AC3.1 a symlink to the repository root refuses (exit 1)" rc_is 1
-    check "#72-AC3.1 a symlink to the root: prints the resolved path" says "$root"
+    check "#72-AC3.10 a symlink to the root: prints the resolved path" says "$root"
     check "#72-AC3.1 a symlink to the root: the repository is intact" test -d "$root/.git"
     check "#72-AC3.1 a symlink to the root: the files are intact" test -f "$root/file.txt"
 
@@ -900,13 +900,38 @@ test_ac3_rm_symlinked_parents() {
     check "#72-AC3.1 the link stays" test -L "$wtd/foo"
 }
 
+# rm --force deletes the links inside a worktree and never what they point at
+test_ac3_links_inside() {
+    new_repo
+    plain_wt feat/li
+    mkdir -p "$work/outside$n"
+    echo precious >"$work/outside$n/keep"
+    echo precious >"$work/outside$n/keep-file"
+    ln -s "$work/outside$n" "$wt/dirlink"
+    ln -s "$work/outside$n/keep-file" "$wt/filelink"
+    ln -s "$root" "$wt/rootlink"
+    ln -s "$work/missing$n" "$wt/dangling"
+    mkdir -p "$wt/sub"
+    ln -s "$work/outside$n" "$wt/sub/nested"
+    w rm --force feat/li
+    check "#72-AC3 links inside a worktree: rm --force exits 0" rc_is 0
+    check "#72-AC3 links inside a worktree: the worktree is gone" test ! -e "$wt"
+    check "#72-AC3 links inside a worktree: never follows a link to a directory outside (its file stays)" eq "$(cat "$work/outside$n/keep")" precious
+    check "#72-AC3 links inside a worktree: a link to a file leaves the file" eq "$(cat "$work/outside$n/keep-file")" precious
+    check "#72-AC3 links inside a worktree: a nested link leaves its target's directory intact" test -d "$work/outside$n"
+    check "#72-AC3 links inside a worktree: a link to the repository root leaves the main copy intact" test -d "$root/.git"
+    check "#72-AC3 links inside a worktree: the main copy's files stay" test -f "$root/file.txt"
+    check "#72-AC3 links inside a worktree: the main copy is untouched" main_untouched
+    check "#72-AC3 links inside a worktree: git no longer lists it" unregistered "$wt"
+}
+
 test_ac3_outside_and_unregistered() {
     new_repo
     g worktree add -q -b hand "$work/hand$n"
     w rm hand
     check "#72-AC3.1 a worktree registered outside .claude/worktrees refuses (exit 1)" rc_is 1
-    check "#72-AC3.1 outside: prints the path it resolved" says "$work/hand$n"
-    check "#72-AC3.1 outside: prints the directory it must be under" says "$wtd"
+    check "#72-AC3.10 outside: prints the path it resolved" says "$work/hand$n"
+    check "#72-AC3.10 outside: prints the directory it must be under" says "$wtd"
     check "#72-AC3.1 outside: it stays registered" registered "$work/hand$n"
     check "#72-AC3.1 outside: its files stay" test -f "$work/hand$n/file.txt"
     w rm --force hand
@@ -919,7 +944,7 @@ test_ac3_outside_and_unregistered() {
     w rm feat/u
     check "#72-AC3.3 a directory under .claude/worktrees that git doesn't know refuses (exit 1)" rc_is 1
     check "#72-AC3.3 unregistered: says it is not a registered worktree" says "not a registered worktree"
-    check "#72-AC3.3 unregistered: prints the resolved path" says "$wtd/feat-u"
+    check "#72-AC3.10 unregistered: prints the resolved path" says "$wtd/feat-u"
     check "#72-AC3.3 unregistered: its content stays" eq "$(cat "$wtd/feat-u/f")" mine
     w rm --force feat/u
     check "#72-AC3.3 unregistered, --force: still refuses (exit 1)" rc_is 1
@@ -952,10 +977,13 @@ test_ac4_docs() {
     check "#72-AC4 the usage shows rm <branch> [--force]" grep -qF "rm <branch> [--force]" <<<"$usage"
     check "#72-AC4 ticket-flow tells to add the worktree with tools/wt.sh add" grep -qF "tools/wt.sh add" "$ticket_flow"
     check "#72-AC4 ticket-flow tells to remove it with tools/wt.sh rm" grep -qF "tools/wt.sh rm" "$ticket_flow"
-    check "#72-AC4 pr-review uses tools/wt.sh add for its scratch worktree" grep -qF "tools/wt.sh add" "$pr_review"
-    check "#72-AC4 pr-review uses tools/wt.sh rm to remove it" grep -qF "tools/wt.sh rm" "$pr_review"
-    check "#72-AC4 pr-review no longer uses git worktree add" bash -c '! grep -q "git .*worktree add" "'"$pr_review"'"'
-    check "#72-AC4 pr-review no longer uses git worktree remove --force" bash -c '! grep -q "worktree remove" "'"$pr_review"'"'
+    # left for the PO (see the PR): a review checkout inside the main copy would make the PR's .claude/skills and CLAUDE.md
+    # project configuration there, so pr-review keeps its detached scratch checkout outside the repository
+    check "#72-AC4 pr-review keeps its review checkout detached" grep -qF "worktree add --detach" "$pr_review"
+    check "#72-AC4 pr-review keeps its review checkout outside the repository (under /tmp)" grep -qF 'WT=${CLAUDE_JOB_DIR:-/tmp}/tmp/review-pr' "$pr_review"
+    check "#72-AC4 pr-review does not put a review checkout under .claude/worktrees" bash -c '! grep -qF "tools/wt.sh add" "'"$pr_review"'"'
+    check "#72-AC4 workflow.md's review rule does not send the reviewer to tools/wt.sh" bash -c '! grep -F "The review breaks a rule on purpose" "'"$wf"'" | grep -qF "tools/wt.sh"'
+    check "#72-AC4 workflow.md lists detached HEAD among rm's refusals" bash -c 'grep -F "tools/wt.sh rm" "'"$wf"'" | grep -qF "detached HEAD"'
     check "#72-AC4 workflow.md names tools/wt.sh add" grep -qF "tools/wt.sh add" "$wf"
     check "#72-AC4 workflow.md names tools/wt.sh rm" grep -qF "tools/wt.sh rm" "$wf"
     check "#72-AC4 workflow.md lists tools/tests/wt-tools.sh" grep -qF "tools/tests/wt-tools.sh" "$wf"
@@ -972,7 +1000,7 @@ test_lint() {
 
 all_tests=(test_ac1_add test_ac1_1_inputs test_ac1_2_boundaries test_ac1_3_state test_ac1_5_concurrency test_ac1_6_partial test_ac1_9_environment test_ac1_decoy_tags test_ac1_9_git_environment \
     test_ac1_10_observability test_ac1_8_permissions test_ac2_clean test_ac2_2_boundaries test_ac2_3_state test_ac2_1_inputs test_ac2_5_concurrency \
-    test_ac2_6_partial test_ac2_7_idempotence test_ac2_9_environment test_ac2_10_observability test_ac3_symlinks test_ac3_rm_symlinked_parents test_ac3_outside_and_unregistered \
+    test_ac2_6_partial test_ac2_7_idempotence test_ac2_9_environment test_ac2_10_observability test_ac3_symlinks test_ac3_rm_symlinked_parents test_ac3_links_inside test_ac3_outside_and_unregistered \
     test_ac4_docs test_lint)
 # with arguments, only those test functions run (while iterating on one fix)
 [ "$#" -eq 0 ] || all_tests=("$@")
