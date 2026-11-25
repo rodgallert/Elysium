@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Stub realpath for tools/tests/wt-tools.sh: wt.sh resolves paths with cd -P and pwd -P (macOS has no realpath -m), so any
+# call is recorded and fails.
+printf '%s\n' "$*" >>"$STUB_DIR/realpath.log"
+echo "stub realpath: wt.sh must not call realpath" >&2
+exit 127

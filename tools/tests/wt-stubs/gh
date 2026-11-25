@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Stub gh for tools/tests/wt-tools.sh: wt.sh makes no gh call, so any call is recorded and fails.
+printf '%s\n' "$*" >>"$STUB_DIR/gh.log"
+echo "stub gh: wt.sh must not call gh" >&2
+exit 1
