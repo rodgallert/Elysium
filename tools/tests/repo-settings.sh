@@ -61,6 +61,7 @@ new_world() {
     put rulesets_per_page_100 '[{"id":1,"name":"Protect main"},{"id":2,"name":"Release branch creation"},{"id":3,"name":"Release branches"},{"id":4,"name":"Release tags"}]'
     put_ruleset 1 "Protect main" 0 15368 true false false
     put_ruleset 3 "Release branches" 0 15368 true false false
+    put user '{"login":"rodgallert"}'
     put codeowners_errors '{"errors":[]}'
     put contents_.github_CODEOWNERS "$good_codeowners"
 }
