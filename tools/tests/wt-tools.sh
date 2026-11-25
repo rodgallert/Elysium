@@ -43,11 +43,12 @@ new_repo() {
     "$real_git" init -q --bare -b main "$origin"
     "$real_git" init -q -b main "$repo"
     echo base >"$repo/file.txt"
-    g add file.txt
+    # the repository's own tracked .gitignore, so a missing .claude/worktrees/ entry shows up as an untracked directory
+    cp "$tools/../.gitignore" "$repo/.gitignore"
+    g add file.txt .gitignore
     g commit -qm "base"
     g remote add origin "$origin"
     g push -q -u origin main
-    echo ".claude/worktrees/" >>"$repo/.git/info/exclude"
     root="$repo"
     wtd="$root/.claude/worktrees"
     head0=$(g rev-parse HEAD)
@@ -78,7 +79,8 @@ runw() {
         cd "${WCWD:-$repo}" || exit 99
         env -i PATH="$stubs:$PATH" HOME="$work/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_CEILING_DIRECTORIES="$work" \
             GIT_AUTHOR_NAME=tester GIT_AUTHOR_EMAIL=tester@example.invalid GIT_COMMITTER_NAME=tester GIT_COMMITTER_EMAIL=tester@example.invalid \
-            STUB_DIR="$sd" REAL_GIT="$real_git" WT_GIT_FAIL="${WT_GIT_FAIL:-}" bash "$script" "$@" >"$prefix.out" 2>"$prefix.err" </dev/null
+            STUB_DIR="$sd" REAL_GIT="$real_git" WT_GIT_FAIL="${WT_GIT_FAIL:-}" WT_RM_FAIL_UNDER="${WT_RM_FAIL_UNDER:-}" \
+            ${W_GIT_DIR:+GIT_DIR="$W_GIT_DIR"} ${W_GIT_WORK_TREE:+GIT_WORK_TREE="$W_GIT_WORK_TREE"} bash "$script" "$@" >"$prefix.out" 2>"$prefix.err" </dev/null
         echo $? >"$prefix.rc"
     )
 }
@@ -133,6 +135,8 @@ test_ac1_add() {
     check "#72-AC1 the checkout has the branch's files" test -f "$wtd/feat-x/file.txt"
     check "#72-AC1 the main working copy's branch, commit and files are unchanged" main_untouched
     check "#72-AC1 stderr is empty on success" eq "$err" ""
+    check "#72-AC1 the tracked .gitignore ignores .claude/worktrees/ (no local exclude in the fixtures)" g check-ignore -q .claude/worktrees/feat-x
+    check "#72-AC1 git status in the main copy is empty after add (nothing for git add -A to stage)" eq "$(g status --porcelain)" ""
 
     # a branch that exists only as origin/<branch> (the ticket flow creates it on GitHub, then fetches): a local branch tracking it
     new_repo
@@ -774,10 +778,13 @@ test_lint() {
     fi
 }
 
-for fn in test_ac1_add test_ac1_1_inputs test_ac1_2_boundaries test_ac1_3_state test_ac1_5_concurrency test_ac1_6_partial test_ac1_9_environment \
+all_tests=(test_ac1_add test_ac1_1_inputs test_ac1_2_boundaries test_ac1_3_state test_ac1_5_concurrency test_ac1_6_partial test_ac1_9_environment \
     test_ac1_10_observability test_ac1_8_permissions test_ac2_clean test_ac2_2_boundaries test_ac2_3_state test_ac2_1_inputs test_ac2_5_concurrency \
     test_ac2_6_partial test_ac2_7_idempotence test_ac2_9_environment test_ac2_10_observability test_ac3_symlinks test_ac3_outside_and_unregistered \
-    test_ac4_docs test_lint; do
+    test_ac4_docs test_lint)
+# with arguments, only those test functions run (while iterating on one fix)
+[ "$#" -eq 0 ] || all_tests=("$@")
+for fn in "${all_tests[@]}"; do
     echo "== $fn"
     "$fn"
 done
