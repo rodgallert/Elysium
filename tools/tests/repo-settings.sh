@@ -36,7 +36,9 @@ fail_with() { printf '%s' "$2" >"$STUB_DIR/api/$1.status"; } # <key> <status|han
 # ruleset_json <name> <count> <gate integration id or none> <dismiss> <code owner review> <last push approval>
 ruleset_json() {
     jq -nc --arg n "$1" --argjson c "$2" --arg g "$3" --argjson d "$4" --argjson o "$5" --argjson l "$6" '
-        {name:$n, rules:[{type:"deletion", parameters:null}, {type:"non_fast_forward", parameters:null},
+        {name:$n, target:"branch", enforcement:"active", bypass_actors:[],
+         conditions:{ref_name:{exclude:[], include:[(if $n == "Protect main" then "~DEFAULT_BRANCH" else "refs/heads/release/**" end)]}},
+         rules:[{type:"deletion", parameters:null}, {type:"non_fast_forward", parameters:null},
           {type:"pull_request", parameters:{required_approving_review_count:$c, dismiss_stale_reviews_on_push:$d,
             require_code_owner_review:$o, require_last_push_approval:$l, allowed_merge_methods:["squash"]}},
           {type:"required_status_checks", parameters:{strict_required_status_checks_policy:true,
@@ -56,9 +58,9 @@ new_world() {
     put actions_permissions_fork-pr-contributor-approval '{"approval_policy":"all_external_contributors"}'
     put vulnerability-alerts ''
     put automated-security-fixes '{"enabled":true,"paused":false}'
-    put rulesets '[{"id":1,"name":"Protect main"},{"id":2,"name":"Release branch creation"},{"id":3,"name":"Release branches"},{"id":4,"name":"Release tags"}]'
+    put rulesets_per_page_100 '[{"id":1,"name":"Protect main"},{"id":2,"name":"Release branch creation"},{"id":3,"name":"Release branches"},{"id":4,"name":"Release tags"}]'
     put_ruleset 1 "Protect main" 0 15368 true false false
-    put_ruleset 3 "Release branches" 0 15368 false false false
+    put_ruleset 3 "Release branches" 0 15368 true false false
     put codeowners_errors '{"errors":[]}'
     put contents_.github_CODEOWNERS "$good_codeowners"
 }
@@ -174,7 +176,16 @@ t_ac1_8_permissions() {
     not_called "#82-AC1.8 never switches account" "auth switch"
     new_world; run_check GH_TOKEN=bad
     [ "$rc" != 0 ] && ok "#82-AC1.8 a bad GH_TOKEN exits non-zero" || bad "#82-AC1.8 a bad token exited 0"
-    has "#82-AC1.8 a bad GH_TOKEN cannot read" "FAIL: fork-approval: cannot read"
+    has "#82-AC1.8 a bad GH_TOKEN cannot read" "FAIL: token: cannot read"
+    not_called "#82-AC1.8 a bad GH_TOKEN stops before the settings" "fork-pr-contributor-approval"
+    new_world; put user '{"login":"someone-else"}'; run_check GH_TOKEN=ghp_stubOtherAccount03
+    [ "$rc" != 0 ] && ok "#82-AC1.8 a token of another account exits non-zero" || bad "#82-AC1.8 another account's token exited 0"
+    has "#82-AC1.8 another account's token named" "FAIL: token: not the rodgallert account's"
+    not_called "#82-AC1.8 another account's token stops before the settings" "fork-pr-contributor-approval"
+    lacks "#82-AC1.8 another account's token not echoed" "ghp_"
+    new_world; run_check GH_TOKEN=ghp_stubOwnerGiven0004
+    rc_is "#82-AC1.8 a given token of the owner is accepted" 0
+    called "#82-AC1.8 the given token's account is read" "api user"
     not_called "#82-AC1.8 a given GH_TOKEN is used, no login lookup" "auth token"
     new_world; fail_with actions_permissions_fork-pr-contributor-approval 403; run_check
     has "#82-AC1.8 a token without admin read is a 403 read" "FAIL: fork-approval: cannot read"
@@ -274,14 +285,15 @@ t_ac3_dismiss() { # the live value on 2026-11-24 was false
     new_world; put_ruleset 1 "Protect main" 0 15368 false false false; run_check
     rc_is "#82-AC3 dismiss stale off on Protect main fails" 1
     has "#82-AC3 names ruleset and field" "FAIL: ruleset Protect main: dismiss_stale_reviews_on_push: false"
-    new_world; put_ruleset 3 "Release branches" 0 15368 true false false; run_check
-    rc_is "#82-AC3 dismiss stale on Release branches is allowed" 0
+    new_world; put_ruleset 3 "Release branches" 0 15368 false false false; run_check
+    rc_is "#82-AC3 dismiss stale off on Release branches fails (spec change 2026-11-24, round 2)" 1
+    has "#82-AC3 names Release branches and field" "FAIL: ruleset Release branches: dismiss_stale_reviews_on_push: false"
 }
 t_ac3_2_boundaries() {
     new_world; put_ruleset 1 "Protect main" 1 15368 true false false; run_check
     rc_is "#82-AC3.2 one required approval fails (Protect main)" 1
     has "#82-AC3.2 names ruleset and field" "FAIL: ruleset Protect main: required_approving_review_count: 1"
-    new_world; put_ruleset 3 "Release branches" 2 15368 false false false; run_check
+    new_world; put_ruleset 3 "Release branches" 2 15368 true false false; run_check
     rc_is "#82-AC3.2 two required approvals fail (Release branches)" 1
     has "#82-AC3.2 names ruleset and field (Release branches)" "FAIL: ruleset Release branches: required_approving_review_count: 2"
 }
@@ -289,7 +301,7 @@ t_ac3_flags() {
     new_world; put_ruleset 1 "Protect main" 0 15368 true true false; run_check
     rc_is "#82-AC3 required code owner review fails" 1
     has "#82-AC3 code owner review named" "FAIL: ruleset Protect main: require_code_owner_review: true"
-    new_world; put_ruleset 3 "Release branches" 0 15368 false false true; run_check
+    new_world; put_ruleset 3 "Release branches" 0 15368 true false true; run_check
     rc_is "#82-AC3 required last push approval fails" 1
     has "#82-AC3 last push approval named" "FAIL: ruleset Release branches: require_last_push_approval: true"
 }
@@ -314,7 +326,7 @@ t_ac3_3_state() {
 t_ac3_6_partial() {
     local s
     for s in 403 500; do
-        new_world; fail_with rulesets "$s"; run_check
+        new_world; fail_with rulesets_per_page_100 "$s"; run_check
         rc_is "#82-AC3.6 ruleset list HTTP $s fails" 1
         has "#82-AC3.6 Protect main cannot read" "FAIL: ruleset Protect main: cannot read"
         has "#82-AC3.6 Release branches cannot read" "FAIL: ruleset Release branches: cannot read"
@@ -324,7 +336,7 @@ t_ac3_6_partial() {
         has "#82-AC3.6 Release branches cannot read (one)" "FAIL: ruleset Release branches: cannot read"
         has "#82-AC3.6 the other is still checked" "ok: ruleset Protect main: required_approving_review_count"
     done
-    new_world; put rulesets '[{"id":1,"name":"Protect main"}]'; run_check
+    new_world; put rulesets_per_page_100 '[{"id":1,"name":"Protect main"}]'; run_check
     rc_is "#82-AC3.6 a ruleset missing from the list fails" 1
     has "#82-AC3.6 not found named" "FAIL: ruleset Release branches: not found"
     new_world; fail_with rulesets_1 hang; run_check
@@ -381,6 +393,78 @@ t_ac3_ref() { # the optional ref lets the file be checked from a branch before i
     rc_is "#82-AC3 a ref starting with a dash is a usage error" 2
 }
 
+t_ac3_rulesets_in_force() { # round 2: enforcement, target, bypass, up-to-date, duplicates, page size
+    local n id
+    for n in "Protect main:1" "Release branches:3"; do
+        id=${n#*:}; n=${n%:*}
+        new_world; put "rulesets_$id" "$(ruleset_json "$n" 0 15368 true false false | jq -c '.enforcement = "disabled"')"; run_check
+        rc_is "#82-AC3 $n disabled fails" 1
+        has "#82-AC3 $n disabled named" "FAIL: ruleset $n: enforcement: disabled"
+        new_world; put "rulesets_$id" "$(ruleset_json "$n" 0 15368 true false false | jq -c '.enforcement = "evaluate"')"; run_check
+        rc_is "#82-AC3 $n in evaluate mode fails" 1
+        has "#82-AC3 $n evaluate named" "FAIL: ruleset $n: enforcement: evaluate"
+        new_world; put "rulesets_$id" "$(ruleset_json "$n" 0 15368 true false false | jq -c '.conditions.ref_name.include = ["refs/heads/nothing"]')"; run_check
+        rc_is "#82-AC3 $n retargeted fails" 1
+        has "#82-AC3 $n retargeted named" "FAIL: ruleset $n: conditions: [\"refs/heads/nothing\"]"
+        new_world; put "rulesets_$id" "$(ruleset_json "$n" 0 15368 true false false | jq -c '.conditions.ref_name.exclude = ["~DEFAULT_BRANCH"]')"; run_check
+        rc_is "#82-AC3 $n with an exclude fails" 1
+        has "#82-AC3 $n exclude named" "FAIL: ruleset $n: conditions"
+        new_world; put "rulesets_$id" "$(ruleset_json "$n" 0 15368 true false false | jq -c '.bypass_actors = [{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"always"}]')"; run_check
+        rc_is "#82-AC3 $n with a bypass actor fails" 1
+        has "#82-AC3 $n bypass named" "FAIL: ruleset $n: bypass_actors: 1"
+        new_world; put "rulesets_$id" "$(ruleset_json "$n" 0 15368 true false false | jq -c '.bypass_actors = null')"; run_check
+        rc_is "#82-AC3 $n with null bypass_actors (as the API reads none) is fine" 0
+        new_world; put "rulesets_$id" "$(ruleset_json "$n" 0 15368 true false false | jq -c '(.rules[]|select(.type=="required_status_checks")|.parameters.strict_required_status_checks_policy) = false')"; run_check
+        rc_is "#82-AC3 $n without up-to-date fails" 1
+        has "#82-AC3 $n strict named" "FAIL: ruleset $n: strict_required_status_checks_policy: false"
+        new_world; put "rulesets_$id" "$(ruleset_json "$n" 0 15368 true false false | jq -c '.target = "tag"')"; run_check
+        rc_is "#82-AC3 $n target tag fails" 1
+        has "#82-AC3 $n target named" "FAIL: ruleset $n: target: tag"
+    done
+    new_world
+    put rulesets_per_page_100 '[{"id":5,"name":"Protect main"},{"id":1,"name":"Protect main"},{"id":3,"name":"Release branches"}]'
+    put_ruleset 5 "Protect main" 0 15368 true false false
+    put "rulesets_5" "$(ruleset_json "Protect main" 0 15368 true false false | jq -c '.enforcement = "disabled"')"
+    run_check
+    rc_is "#82-AC3 a duplicate ruleset name fails" 1
+    has "#82-AC3 duplicate named" "FAIL: ruleset Protect main: duplicate name (2 rulesets)"
+    lacks "#82-AC3 a duplicate is not read as the first" "ok: ruleset Protect main"
+    new_world; run_check
+    called "#82-AC3 the ruleset list asks for 100 per page" "rulesets?per_page=100"
+}
+t_ac3_codeowners_last_match() { # round 2: last matching line wins
+    new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'* @someone-else\n'; run_check
+    rc_is "#82-AC3 a later * line overrides every owner" 1
+    has "#82-AC3 the override is named" "FAIL: codeowners: /tools/: last matching line is \`* @someone-else\`"
+    new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'/tools/ @someone-else\n'; run_check
+    rc_is "#82-AC3 a later same-path line overrides" 1
+    has "#82-AC3 same-path override named" "FAIL: codeowners: /tools/: last matching line is \`/tools/ @someone-else\`"
+    lacks "#82-AC3 the other paths stay ok" "FAIL: codeowners: /.github/"
+    new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'/tools/\n'; run_check
+    rc_is "#82-AC3 a later line with no owner unsets it" 1
+    new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'/tools/scripts/ @someone-else\n'; run_check
+    rc_is "#82-AC3 a later line for a path inside a guarded one fails" 1
+    new_world; put contents_.github_CODEOWNERS $'* @someone-else\n'"$good_codeowners"; run_check
+    rc_is "#82-AC3 an earlier * line is overridden by the specific lines" 0
+    new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'/unrelated/ @someone-else\n# * @someone-else\n'; run_check
+    rc_is "#82-AC3 later lines for other paths and comments do not matter" 0
+    new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'/tools/ @someone-else @rodgallert\n'; run_check
+    rc_is "#82-AC3 the owner among several owners is enough" 0
+}
+t_ac3_ref_label() { # round 2: with a ref the lines name it
+    new_world
+    mv "$STUB_DIR/api/codeowners_errors" "$STUB_DIR/api/codeowners_errors_ref_chore_x"
+    mv "$STUB_DIR/api/contents_.github_CODEOWNERS" "$STUB_DIR/api/contents_.github_CODEOWNERS_ref_chore_x"
+    run_check REPO_SETTINGS_REF=chore/x
+    has "#82-AC3 errors line names the ref" "ok: codeowners errors (ref chore/x)"
+    has "#82-AC3 owner lines name the ref" "ok: codeowners (ref chore/x): /tools/"
+    new_world; run_check
+    has "#82-AC3 without a ref the lines are unchanged" "ok: codeowners: /tools/"
+    new_world; mv "$STUB_DIR/api/contents_.github_CODEOWNERS" "$STUB_DIR/api/contents_.github_CODEOWNERS_ref_chore_x"; mv "$STUB_DIR/api/codeowners_errors" "$STUB_DIR/api/codeowners_errors_ref_chore_x"
+    fail_with contents_.github_CODEOWNERS_ref_chore_x 404; run_check REPO_SETTINGS_REF=chore/x
+    has "#82-AC3 a failure names the ref" "FAIL: codeowners (ref chore/x): cannot read"
+}
+
 # ---- #82-AC4: docs --------------------------------------------------------------------------------------------------
 
 t_ac4_docs() { # the paragraph exists and states the values the script asserts (the read-through checks the rest)
@@ -388,6 +472,7 @@ t_ac4_docs() { # the paragraph exists and states the values the script asserts (
     for s in all_external_contributors "tools/check-repo-settings.sh" "CODEOWNERS" "dismiss_stale_reviews_on_push" "15368" "Dependabot alerts" "security updates"; do
         grep -qF -- "$s" "$doc" && ok "#82-AC4 workflow.md mentions $s" || { out="$s"; bad "#82-AC4 workflow.md lacks: $s"; }
     done
+    sed -n '/^### Releasing/,/^### Checks on/p' "$doc" | grep -qF "tools/check-repo-settings.sh" && ok "#82-AC4 the release steps run the settings check" || { out=""; bad "#82-AC4 the release steps lack the settings check"; }
     [ -f "$tools/../.github/CODEOWNERS" ] && ok "#82-AC3 .github/CODEOWNERS exists" || { out=""; bad "#82-AC3 .github/CODEOWNERS is missing"; }
 }
 
