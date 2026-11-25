@@ -421,24 +421,21 @@ local_case "a local action outside .github with action.yaml" 0 '' "./ci/release"
 local_case "a local reusable workflow that exists" 0 '' "./.github/workflows/other.yml" ".github/workflows/other.yml"
 local_case "a local path with no action.yml" 1 "$W:9: ./tools/nope" "./tools/nope" ""
 local_case "a local path with a shell character" 1 "$W:9: ./a;b" "./a;b" ""
-# file names git would quote (", \, a tab, a newline) are listed, scanned and refused (#83-AC1.2, #83-AC3.1)
+# file names with a byte outside [A-Za-z0-9._/-] are listed and refused, never scanned (#83-AC1.2, #83-AC3.1)
 odd_bad=$'on: push\npermissions: write-all\njobs:\n  a:\n    runs-on: ubuntu-latest\n    permissions: write-all\n    steps:\n      - uses: evil/act@v1'
-odd_case() { # label, file name, expected printed name
-    local f=".github/workflows/$3"
+odd_case() { # label, file name (as git stores it)
+    local f=".github/workflows/$2"
     newroot
-    printf '%s\n' "$odd_bad" >"$R/.github/workflows/$2"
-    case_run "#83-AC1.2" "a workflow named $1 is scanned and refused" "$pins" "$R" 1 "$f:1: <unsafe file name>
-$f:5: ubuntu-latest
-$f:8: evil/act@v1"
-    newroot
-    printf '%s\n' "$odd_bad" >"$R/.github/workflows/$2"
-    case_run "#83-AC3.1" "a workflow named $1 is scanned and refused (permissions)" "$perms" "$R" 1 "$f: unsafe file name
-$f: top level: permissions must be {} (found: write-all)
-$f: job a: permissions: write-all is not allowed"
+    printf '%s\n' "$odd_bad" >"$R/$f"
+    case_run "#83-AC1.2" "a workflow named $1 is refused" "$pins" "$R" 1 "$f:1: <unsafe file name>"
+    case_run "#83-AC3.1" "a workflow named $1 is refused (permissions)" "$perms" "$R" 1 "$f: unsafe file name"
 }
-odd_case "q\"x.yml" 'q"x.yml' 'q"x.yml'
-odd_case 'b\x.yml' 'b\x.yml' 'b\x.yml'
-odd_case "t<TAB>x.yml" $'t\tx.yml' $'t\tx.yml'
+odd_case "q\"x.yml" 'q"x.yml'
+odd_case 'b\x.yml' 'b\x.yml'
+odd_case "t<TAB>x.yml" $'t\tx.yml'
+odd_case "a space" 'a b.yml'
+odd_case "an equals sign" 'a=b.yml'
+odd_case "non-UTF-8 bytes" $'\xff\xfe.yml'
 newroot
 printf '%s\n' "$odd_bad" >"$R/.github/workflows/n"$'\n'"x.yml"
 case_run "#83-AC1.2" "a workflow with a newline in its name is refused" "$pins" "$R" 1 ".github/workflows/n?x.yml:1: <unsafe file name>"
@@ -460,6 +457,24 @@ git -C "$R" add -A
 git -C "$R" update-index --add --cacheinfo "160000,$s40,x/action.yml"
 NOGIT=1 case_run "#83-AC1.2" "a gitlink named x/action.yml is not an action" "$pins" "$R" 1 "$W:9: ./x
 x/action.yml:1: <not a regular file>"
+
+newroot
+printf '%s\n' "$odd_bad" >"$R/.github/workflows/a"$'\001'"b.yml"
+case_run "#83-AC1.2" "a name with the byte 0x01 is an error, never split around" "$pins" "$R" 2 "check-action-pins.sh: a tracked file name contains byte 0x01 or 0x02"
+case_run "#83-AC3.1" "a name with the byte 0x01 is an error (permissions)" "$perms" "$R" 2 "check-workflow-permissions.sh: a tracked file name contains byte 0x01 or 0x02"
+newroot
+printf '%s\n' "$odd_bad" >"$R/.github/workflows/a"$'\002'"b.yml"
+case_run "#83-AC1.2" "a name with the byte 0x02 is an error" "$pins" "$R" 2 "check-action-pins.sh: a tracked file name contains byte 0x01 or 0x02"
+newroot
+mkdir -p "$R/zz=x"
+printf 'name: e\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@main\n' >"$R/zz=x/action.yml"
+printf '%s\n%s\n' "$HDR" "      - uses: ./zz=x" >"$R/$W"
+case_run "#83-AC1.2" "a file that looks like an awk assignment is refused, not skipped" "$pins" "$R" 1 "$W:9: ./zz=x
+zz=x/action.yml:1: <unsafe file name>"
+newroot
+mkdir -p "$R/-x"
+printf 'name: e\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@main\n' >"$R/-x/action.yml"
+case_run "#83-AC1.2" "a path that starts with a dash is scanned like any other" "$pins" "$R" 1 "-x/action.yml:5: actions/checkout@main"
 
 # #83-AC1.2 boundaries
 newroot
@@ -745,6 +760,9 @@ only in yq: node_modules/pkg/action.yml: uses actions/checkout@v4"
     newroot
     printf '%s\n' "$odd_bad" >"$R/.github/workflows/q\"x.yml"
     case_run "#83-AC1.2" "cross-check: a workflow whose name git quotes is read by both sides" "$cross" "$R" 0 ''
+    newroot
+    printf '%s\n' "$odd_bad" >"$R/.github/workflows/a"$'\001'"b.yml"
+    case_run "#83-AC1.2" "cross-check: a name with the byte 0x01 is an error too" "$cross" "$R" 2 "check-action-pins.sh: a tracked file name contains byte 0x01 or 0x02"
     case_run "#83-AC1.1" "cross-check: the repository agrees" "$cross" "$root" 0 ''
     case_run "#83-AC1.2" "cross-check: a root that is not a directory is a usage error" "$cross" "$work/pins/none" 2 \
         "check-workflow-crosscheck.sh: $work/pins/none is not a directory"
