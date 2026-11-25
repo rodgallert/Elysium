@@ -708,6 +708,69 @@ test_ac3_symlinks() {
     check "#72-AC3 add via a symlinked .claude/worktrees creates nothing outside" eq "$(ls -A "$work/outside$n")" keep
 }
 
+# a worktree registered at a path other than the one its branch name gives, reached through a symlinked .claude or
+# .claude/worktrees: rm compares with the literal <root>/.claude/worktrees/, never a resolved one
+test_ac3_rm_symlinked_parents() {
+    local elsewhere
+
+    new_repo
+    g worktree add -q -b nested "$root/sub"
+    mkdir -p "$root/.claude"
+    ln -s .. "$root/.claude/worktrees"
+    w rm nested
+    check "#72-AC3.1 .claude/worktrees -> .. : rm refuses (exit 1)" rc_is 1
+    check "#72-AC3.10 .claude/worktrees -> .. : the refusal names the symlinked directory and where it resolves" says "$root/.claude/worktrees resolves to $root"
+    check "#72-AC3.1 .claude/worktrees -> .. : the worktree at <root>/sub stays registered" registered "$root/sub"
+    check "#72-AC3.1 .claude/worktrees -> .. : its files stay" test -f "$root/sub/file.txt"
+    w rm --force nested
+    check "#72-AC3.1 .claude/worktrees -> .. , --force: still refuses (exit 1)" rc_is 1
+    check "#72-AC3.1 .claude/worktrees -> .. , --force: still there" test -f "$root/sub/file.txt"
+
+    new_repo
+    elsewhere="$work/elsewhere$n"
+    mkdir -p "$elsewhere/worktrees"
+    g worktree add -q -b v "$elsewhere/worktrees/other"
+    ln -s "$elsewhere" "$root/.claude"
+    w rm v
+    check "#72-AC3.1 .claude -> /elsewhere: rm refuses (exit 1)" rc_is 1
+    check "#72-AC3.10 .claude -> /elsewhere: the refusal names the symlinked directory and where it resolves" says "$root/.claude resolves to $elsewhere"
+    check "#72-AC3.1 .claude -> /elsewhere: the worktree stays registered" registered "$elsewhere/worktrees/other"
+    check "#72-AC3.1 .claude -> /elsewhere: its files stay" test -f "$elsewhere/worktrees/other/file.txt"
+    w rm --force v
+    check "#72-AC3.1 .claude -> /elsewhere, --force: still refuses (exit 1)" rc_is 1
+    check "#72-AC3.1 .claude -> /elsewhere, --force: still there" test -f "$elsewhere/worktrees/other/file.txt"
+
+    new_repo
+    elsewhere="$work/elsewhere$n"
+    mkdir -p "$elsewhere" "$root/.claude"
+    g worktree add -q -b v "$elsewhere/other"
+    ln -s "$elsewhere" "$root/.claude/worktrees"
+    w rm v
+    check "#72-AC3.1 .claude/worktrees -> /elsewhere: rm refuses (exit 1)" rc_is 1
+    check "#72-AC3.10 .claude/worktrees -> /elsewhere: the refusal names the symlinked directory and where it resolves" says "$root/.claude/worktrees resolves to $elsewhere"
+    check "#72-AC3.1 .claude/worktrees -> /elsewhere: the worktree stays registered" registered "$elsewhere/other"
+    check "#72-AC3.1 .claude/worktrees -> /elsewhere: its files stay" test -f "$elsewhere/other/file.txt"
+    w rm --force v
+    check "#72-AC3.1 .claude/worktrees -> /elsewhere, --force: still refuses (exit 1)" rc_is 1
+    check "#72-AC3.1 .claude/worktrees -> /elsewhere, --force: still there" test -f "$elsewhere/other/file.txt"
+
+    # feat/b is registered under another name (foo), and foo was replaced by a symlink to a sibling worktree
+    new_repo
+    plain_wt feat/v
+    echo precious >"$wt/uncommitted.txt"
+    g worktree add -q -b feat/b "$wtd/foo"
+    rm -rf "$wtd/foo"
+    ln -s "$wtd/feat-v" "$wtd/foo"
+    w rm feat/b --force
+    check "#72-AC3.1 a registered path that is a symlink to a sibling worktree: refuses (exit 1)" rc_is 1
+    check "#72-AC3.10 that refusal prints the resolved path" says "$wtd/feat-v"
+    check "#72-AC3.10 that refusal prints the directory it must be under" says "$wtd"
+    check "#72-AC3.1 the sibling stays registered" registered "$wtd/feat-v"
+    check "#72-AC3.1 the sibling's committed files stay" test -f "$wtd/feat-v/file.txt"
+    check "#72-AC3.1 the sibling's uncommitted file stays" eq "$(cat "$wtd/feat-v/uncommitted.txt")" precious
+    check "#72-AC3.1 the link stays" test -L "$wtd/foo"
+}
+
 test_ac3_outside_and_unregistered() {
     new_repo
     g worktree add -q -b hand "$work/hand$n"
@@ -780,7 +843,7 @@ test_lint() {
 
 all_tests=(test_ac1_add test_ac1_1_inputs test_ac1_2_boundaries test_ac1_3_state test_ac1_5_concurrency test_ac1_6_partial test_ac1_9_environment \
     test_ac1_10_observability test_ac1_8_permissions test_ac2_clean test_ac2_2_boundaries test_ac2_3_state test_ac2_1_inputs test_ac2_5_concurrency \
-    test_ac2_6_partial test_ac2_7_idempotence test_ac2_9_environment test_ac2_10_observability test_ac3_symlinks test_ac3_outside_and_unregistered \
+    test_ac2_6_partial test_ac2_7_idempotence test_ac2_9_environment test_ac2_10_observability test_ac3_symlinks test_ac3_rm_symlinked_parents test_ac3_outside_and_unregistered \
     test_ac4_docs test_lint)
 # with arguments, only those test functions run (while iterating on one fix)
 [ "$#" -eq 0 ] || all_tests=("$@")
