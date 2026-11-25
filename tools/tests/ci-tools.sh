@@ -319,6 +319,34 @@ case_run "#83-AC1.1" "composite actions and .yaml workflows are checked too" "$p
 .github/actions/x/action.yml:5: actions/checkout@v4
 .github/workflows/z.yaml:5: actions/cache@v4"
 
+# fail closed: a `uses` or `runs-on` key written in any form the check does not read is an offender (#83-AC1.1, #83-AC4.1)
+U='<unrecognised: uses>'
+pin_bad "#83-AC1.1" "a flow-mapping step" "      - { uses: actions/checkout@v4 }" "$U"
+pin_bad "#83-AC1.1" "a flow-mapping step that is pinned" "      - { uses: actions/checkout@$s40 }" "$U"
+pin_bad "#83-AC1.1" "a double-quoted key" "      - \"uses\": actions/checkout@main" "$U"
+pin_bad "#83-AC1.1" "a single-quoted key" "      - 'uses': x/y@main" "$U"
+pin_bad "#83-AC1.1" "a space before the colon" "      - uses : actions/checkout@v4" "$U"
+pin_ok "#83-AC1.1" "the word uses in a trailing comment is not a key" "      - run: echo hi # uses: x/y@main"
+newroot
+printf '%s\n' 'name: t' 'on: push' 'permissions: {}' 'jobs:' \
+    '  evil: { runs-on: [ubuntu-latest], permissions: {}, steps: [ { uses: actions/checkout@v4 } ] }' >"$R/$W"
+case_run "#83-AC1.1" "a job written as a flow mapping, steps and runs-on in it" "$pins" "$R" 1 "$W:5: $U
+$W:5: <unrecognised: runs-on>"
+newroot
+mkdir -p "$R/tools/evil" "$R/tools/ok" "$R/Prince/Frontend/x/node_modules/pkg" "$R/.claude/worktrees/w/.github/workflows"
+printf 'name: e\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@main\n' >"$R/tools/evil/action.yml"
+printf 'name: o\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@%s # v4.4.0\n' "$s40" >"$R/tools/ok/action.yaml"
+printf 'name: n\nruns:\n  steps:\n    - uses: actions/checkout@v4\n' >"$R/Prince/Frontend/x/node_modules/pkg/action.yml"
+printf 'on: push\njobs:\n  j:\n    steps:\n      - uses: actions/checkout@v4\n' >"$R/.claude/worktrees/w/.github/workflows/a.yml"
+case_run "#83-AC1.1" "a local action anywhere in the repository is scanned (not node_modules or worktrees)" "$pins" "$R" 1 \
+    "tools/evil/action.yml:5: actions/checkout@main"
+newroot
+printf '%s\n' "$HDR" "      - uses: actions/checkout@$s40 # v4.4.0" "      - uses: ./.github/actions/x" >"$R/$W"
+case_run "#83-AC1.10" "--list prints every runs-on and uses value, in line order, and exits 0" "$pins" "$R" 0 \
+    "$W: runs-on ubuntu-24.04
+$W: uses actions/checkout@$s40
+$W: uses ./.github/actions/x" --list
+
 # #83-AC1.2 boundaries
 newroot
 printf 'name: t\non: push\njobs:\n  j:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n' >"$R/$W"
@@ -382,6 +410,9 @@ runner_case "#83-AC4.1" "a flow list" 1 "    runs-on: [ubuntu-24.04]" "$W:6: [ub
 runner_case "#83-AC4.1" "a block list" 1 $'    runs-on:\n      - ubuntu-24.04' "$W:6: <empty>"
 runner_case "#83-AC4.1" "an arm runner" 1 "    runs-on: ubuntu-24.04-arm" "$W:6: ubuntu-24.04-arm"
 runner_case "#83-AC4.1" "a quoted label" 1 "    runs-on: 'ubuntu-24.04'" "$W:6: 'ubuntu-24.04'"
+runner_case "#83-AC4.1" "a double-quoted key" 1 '    "runs-on": ubuntu-latest' "$W:6: <unrecognised: runs-on>"
+runner_case "#83-AC4.1" "a single-quoted key" 1 "    'runs-on': ubuntu-24.04" "$W:6: <unrecognised: runs-on>"
+runner_case "#83-AC4.1" "a space before the colon" 1 "    runs-on : ubuntu-24.04" "$W:6: <unrecognised: runs-on>"
 runner_case "#83-AC4.10" "every offender of a file is listed" 1 $'    runs-on: ubuntu-latest\n  k:\n    runs-on: macos-latest' \
     "$W:6: ubuntu-latest
 $W:8: macos-latest"
@@ -414,6 +445,15 @@ perm_case "#83-AC3.1" "a job with write-all" 1 "$W: job a: permissions: write-al
 perm_case "#83-AC3.1" "a permissions key of a step input is not the job's block" 1 "$W: job a: no permissions block" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: ./x\n        with:\n          permissions: contents: read'
 perm_case "#83-AC3.1" "a permissions key only inside a job is not the top level" 1 "$W: top level: permissions must be {} (found: no permissions key)" $'on: push\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: {}\n    steps:\n      - run: echo hi'
 perm_case "#83-AC3.1" "a job block with nothing in it" 1 "$W: job a: permissions block is empty (write {} to grant nothing)" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions:\n    steps:\n      - run: echo hi'
+perm_case "#83-AC3.1" "a job id in quotes (a flow job that grants write-all)" 1 "$W: job (line 11): not a plain job key" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: {}\n    steps:\n      - run: echo hi\n  # next\n  \n  "evil": { runs-on: ubuntu-24.04, permissions: write-all, steps: [] }'
+perm_case "#83-AC3.1" "a job written as a flow mapping" 1 "$W: job (line 6): not a plain job key" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n  evil: { runs-on: ubuntu-24.04, permissions: write-all }'
+perm_case "#83-AC3.1" "a job id with a value after the colon" 1 "$W: job (line 4): not a plain job key" $'on: push\npermissions: {}\njobs:\n  a: &anchor\n    runs-on: ubuntu-24.04\n    permissions: {}'
+perm_case "#83-AC3.1" "a quoted jobs key" 1 "$W: top level: line 3: not a plain key" $'on: push\npermissions: {}\n"jobs":\n  a:\n    runs-on: ubuntu-24.04'
+perm_case "#83-AC3.1" "jobs as a flow mapping" 1 "$W: top level: line 3: jobs must be a block, not an inline value" $'on: push\npermissions: {}\njobs: { a: { runs-on: ubuntu-24.04, permissions: write-all } }'
+perm_case "#83-AC3.1" "a quoted top-level permissions key" 1 "$W: top level: line 2: not a plain key
+$W: top level: permissions must be {} (found: no permissions key)" $'on: push\n"permissions": {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: {}'
+perm_case "#83-AC3.1" "a quoted job-level permissions key" 1 "$W: job a: no permissions block" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    "permissions": write-all'
+perm_case "#83-AC3.1" "a space before the colon in a job's permissions" 1 "$W: job a: no permissions block" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions : write-all'
 perm_case "#83-AC3.2" "a single job with its block" 0 '' $'on: push\npermissions: {}\njobs:\n  only:\n    runs-on: ubuntu-24.04\n    permissions:\n      contents: read\n    steps:\n      - run: echo hi'
 perm_case "#83-AC3.2" "a single job without a block" 1 "$W: job only: no permissions block" $'on: push\npermissions: {}\njobs:\n  only:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi'
 newroot
@@ -524,7 +564,8 @@ dep_is() { # id, name, jq filter that must be true
     require "$1" "$2" "$(jq -e "$3" <<<"${depjson:-null}" >/dev/null 2>&1 && echo 0 || echo 1)" "${depjson:-no .github/dependabot.yml, or no yq to read it}"
 }
 dep_is "#83-AC5" "dependabot.yml is version 2 with exactly one update entry" '.version == 2 and (.updates | length) == 1'
-dep_is "#83-AC5" "the entry is the github-actions ecosystem at /" '.updates[0]["package-ecosystem"] == "github-actions" and .updates[0].directory == "/"'
+dep_is "#83-AC5" "the entry is the github-actions ecosystem" '.updates[0]["package-ecosystem"] == "github-actions"'
+dep_is "#83-AC5" "it reads / and every composite action under .github/actions" '.updates[0].directories == ["/", "/.github/actions/*"] and (.updates[0] | has("directory") | not)'
 dep_is "#83-AC5" "the schedule is weekly" '.updates[0].schedule.interval == "weekly"'
 dep_is "#83-AC5" "one group takes every action update" '(.updates[0].groups | length) == 1 and ((.updates[0].groups | to_entries[0].value.patterns) == ["*"])'
 dep_is "#83-AC5" "the cooldown is 14 days" '.updates[0].cooldown["default-days"] == 14'
@@ -536,6 +577,69 @@ for phrase in 'tools/check-action-pins.sh' 'tools/check-workflow-permissions.sh'
 done
 require "#83-AC4.4" "Docs/workflow.md says where the runner image's retirement is tracked" \
     "$(grep -qiE 'retire|deprecat' "$doc" && grep -q 'actions/runner-images' "$doc" && echo 0 || echo 1)"
+
+# #83 cross-check: yq (the YAML parser GitHub's own reading is closest to) lists every job with its permissions and every
+# uses and runs-on, and the lists must equal what the awk checks saw. A form the checks cannot read shows up as a difference.
+cross="$root/tools/check-workflow-crosscheck.sh"
+have_yq=1
+if ! command -v yq >/dev/null 2>&1 && ! command -v docker >/dev/null 2>&1; then
+    have_yq=0
+    if [ -n "${CI:-}" ]; then
+        failed=$((failed + 1))
+        echo "FAIL: #83 yq is not installed on CI, so the cross-check cannot run"
+    else
+        echo "SKIP: neither yq nor docker is available; the #83 cross-check cases are skipped"
+    fi
+fi
+cross_case() { # name, expected exit code, expected output, workflow text
+    [ "$have_yq" = 1 ] || return 0
+    newroot
+    printf '%s\n' "$4" >"$R/$W"
+    case_run "#83-AC1.1" "cross-check: $1" "$cross" "$R" "$2" "$3"
+}
+cross_case "a clean workflow agrees" 0 '' "$GOOD"$'\n'"      - uses: actions/checkout@$s40 # v4.4.0"
+cross_case "a flow-mapping step is seen by yq only" 1 "only in yq: $W: uses actions/checkout@v4" \
+    $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: {}\n    steps:\n      - { uses: actions/checkout@v4 }'
+cross_case "a quoted job that grants write-all is seen by yq only" 1 "only in yq: $W: job evil: write-all
+only in yq: $W: runs-on ubuntu-24.04" \
+    $'on: push\npermissions: {}\njobs:\n  "evil": { runs-on: ubuntu-24.04, permissions: write-all, steps: [] }'
+cross_case "a quoted runs-on is seen by yq only" 1 "only in yq: $W: runs-on ubuntu-latest" \
+    $'on: push\npermissions: {}\njobs:\n  a:\n    "runs-on": ubuntu-latest\n    permissions: {}\n    steps:\n      - run: echo hi'
+cross_case "a job without a block agrees (both say so)" 0 '' \
+    $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi'
+if [ "$have_yq" = 1 ]; then
+    newroot
+    mkdir -p "$R/tools/evil"
+    printf 'name: e\nruns:\n  using: composite\n  steps:\n    - { uses: actions/checkout@main }\n' >"$R/tools/evil/action.yml"
+    case_run "#83-AC1.1" "cross-check: a composite action outside .github is read too" "$cross" "$R" 1 \
+        "only in yq: tools/evil/action.yml: uses actions/checkout@main"
+    case_run "#83-AC1.1" "cross-check: the repository agrees" "$cross" "$root" 0 ''
+    case_run "#83-AC1.2" "cross-check: a root that is not a directory is a usage error" "$cross" "$work/pins/none" 2 \
+        "check-workflow-crosscheck.sh: $work/pins/none is not a directory"
+fi
+aj="$(block "$root/.github/workflows/build.yml" action-pins)"
+grep -q 'tools/check-workflow-crosscheck.sh' <<<"$aj"
+require "#83-AC2" "action-pins runs the yq cross-check" $?
+
+# review fixes: shellcheck and the docs
+rc="$root/.shellcheckrc"
+require "#83-AC4.9" ".shellcheckrc no longer switches SC2015 off for the whole repository" \
+    "$(grep -q 'SC2015' "$rc" && echo 1 || echo 0)"
+require "#83-AC4.9" ".shellcheckrc keeps SC2002 (style only) off" "$(grep -q 'SC2002' "$rc" && echo 0 || echo 1)"
+if command -v shellcheck >/dev/null 2>&1; then
+    out="$(cd "$root" && shellcheck -x tools/gh-lib.sh tools/pr.sh tools/ticket.sh 2>&1)"
+    require "#83-AC4.9" "the guards that used to be A && B || die pass shellcheck without the SC2015 disable" "$?" "$out"
+else
+    echo "note: shellcheck is not installed here; CI's shellcheck runs this case"
+fi
+require "#83-AC4.9" "no 'A && B || C' guard is left in the linted scripts" \
+    "$(grep -nE '\] && \[.*\] \|\| (die|usage)|\) && \[ -n .*\] \|\|$' "$root/tools/gh-lib.sh" "$root/tools/pr.sh" "$root/tools/ticket.sh" >/dev/null && echo 1 || echo 0)"
+for phrase in 'impostor' 'check-workflow-crosscheck.sh' 'fail on any form'; do
+    require "#83-AC5" "Docs/workflow.md states: $phrase" "$(grep -qiF -- "$phrase" "$doc" && echo 0 || echo 1)"
+done
+skill="$root/.claude/skills/pr-review/SKILL.md"
+require "#83-AC5" "the pr-review skill has the pin step: the comment's tag resolves to the pinned SHA" \
+    "$(grep -qi 'impostor' "$skill" && grep -q 'git/ref/tags' "$skill" && echo 0 || echo 1)"
 
 echo "ci tools: $pass passed, $failed failed"
 [ "$failed" -eq 0 ]
