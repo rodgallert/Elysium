@@ -236,6 +236,14 @@ newroot() { # sets R to a fresh fixture root with .github/workflows
 case_run() { # id, name, script, root, expected exit code, expected output (exactly), extra arguments
     local sh out rc id="$1" name="$2" script="$3" dir="$4" want="$5" wantout="$6"
     shift 6
+    # the checks read the files git tracks: a fixture is its own repository (never the real one)
+    case "$dir" in
+        "$work"/*)
+            if [ -d "$dir" ] && [ -z "${NOGIT:-}" ]; then
+                [ -e "$dir/.git" ] || git -C "$dir" init -q
+                git -C "$dir" add -A >/dev/null 2>&1
+            fi ;;
+    esac
     for sh in "${shells[@]}"; do
         out="$("$sh" "$script" "$@" "$dir" 2>&1)"
         rc=$?
@@ -337,8 +345,55 @@ printf 'name: e\nruns:\n  using: composite\n  steps:\n    - uses: actions/checko
 printf 'name: o\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@%s # v4.4.0\n' "$s40" >"$R/tools/ok/action.yaml"
 printf 'name: n\nruns:\n  steps:\n    - uses: actions/checkout@v4\n' >"$R/Prince/Frontend/x/node_modules/pkg/action.yml"
 printf 'on: push\njobs:\n  j:\n    steps:\n      - uses: actions/checkout@v4\n' >"$R/.claude/worktrees/w/.github/workflows/a.yml"
-case_run "#83-AC1.1" "a local action anywhere in the repository is scanned (not node_modules or worktrees)" "$pins" "$R" 1 \
+printf 'node_modules/\n.claude/worktrees/\n' >"$R/.gitignore"
+case_run "#83-AC1.1" "a tracked local action anywhere is scanned; ignored node_modules and worktrees are not" "$pins" "$R" 1 \
     "tools/evil/action.yml:5: actions/checkout@main"
+# local actions in directories the scan used to skip, and reached through symlinks (#83-AC1.2)
+unpinned=$'name: e\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@main\n'
+newroot
+mkdir -p "$R/.claude/evil" "$R/node_modules/pkg"
+printf '%s' "$unpinned" >"$R/.claude/evil/action.yml"
+printf '%s' "$unpinned" >"$R/node_modules/pkg/action.yml"
+printf '%s\n%s\n%s\n' "$HDR" "      - uses: ./.claude/evil" "      - uses: ./node_modules/pkg" >"$R/$W"
+case_run "#83-AC1.2" "a tracked action under .claude/ or node_modules/ is scanned" "$pins" "$R" 1 \
+    ".claude/evil/action.yml:5: actions/checkout@main
+node_modules/pkg/action.yml:5: actions/checkout@main"
+newroot
+mkdir -p "$R/tools/s" "$R/tools/real"
+printf '%s' "$unpinned" >"$R/real.yml"
+ln -s ../../real.yml "$R/tools/s/action.yml"
+printf '%s\n%s\n' "$HDR" "      - uses: ./tools/s" >"$R/$W"
+case_run "#83-AC1.2" "an action.yml that is a symlink is an offender, and so is the reference to it" "$pins" "$R" 1 \
+    "$W:9: ./tools/s
+tools/s/action.yml:1: <symlink>"
+newroot
+mkdir -p "$R/tools/real"
+printf 'name: o\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@%s # v4.4.0\n' "$s40" >"$R/tools/real/action.yml"
+ln -s real "$R/tools/x"
+printf '%s\n%s\n' "$HDR" "      - uses: ./tools/x" >"$R/$W"
+case_run "#83-AC1.2" "a reference through a symlinked directory is an offender" "$pins" "$R" 1 "$W:9: ./tools/x"
+newroot
+mkdir -p "$R/tools/ok"
+printf 'name: o\nruns:\n  using: composite\n  steps:\n    - run: echo hi\n' >"$R/tools/ok/action.yml"
+printf 'readme\n' >"$R/README.md"
+printf '%s\n%s\n' "$HDR" "      - uses: ./README.md" >"$R/$W"
+case_run "#83-AC1.2" "a ./ reference to a file that is not an action or a workflow" "$pins" "$R" 1 "$W:9: ./README.md"
+newroot
+mkdir -p "$R/tools/ok"
+printf 'name: o\nruns:\n  using: composite\n  steps:\n    - run: echo hi\n' >"$R/tools/ok/action.yml"
+printf '%s\n%s\n' "$HDR" "      - uses: ./tools/../tools/ok" >"$R/$W"
+case_run "#83-AC1.2" "a ./ path that is not normalised" "$pins" "$R" 1 "$W:9: ./tools/../tools/ok"
+newroot
+printf 'name: o\n' >"$R/tools-action.yml"
+printf '%s\n' "$HDR" >"$R/$W"
+mkdir -p "$R/untracked"
+git -C "$R" init -q
+git -C "$R" add -A
+printf 'name: e\nruns:\n  steps:\n    - uses: actions/checkout@main\n' >"$R/untracked/action.yml"
+NOGIT=1 case_run "#83-AC1.2" "a file git does not track is not scanned" "$pins" "$R" 0 ''
+newroot
+NOGIT=1 case_run "#83-AC1.2" "a directory that is not a git repository is a usage error" "$pins" "$R" 2 "check-action-pins.sh: $R is not a git repository"
+
 newroot
 printf '%s\n' "$HDR" "      - uses: actions/checkout@$s40 # v4.4.0" "      - uses: ./.github/actions/x" >"$R/$W"
 case_run "#83-AC1.10" "--list prints every runs-on and uses value, in line order, and exits 0" "$pins" "$R" 0 \
@@ -472,6 +527,7 @@ perm_case "#83-AC3.1" "a space before the colon in a job's permissions" 1 "$W: j
 perm_case "#83-AC3.1" "a quoted job name with its block is read as the job it names" 0 '' $'on: push\npermissions: {}\njobs:\n  "build":\n    runs-on: ubuntu-24.04\n    permissions: {}\n  \'test\':\n    runs-on: ubuntu-24.04\n    permissions:\n      contents: read'
 perm_case "#83-AC3.1" "a quoted job name without a block is named" 1 "$W: job build: no permissions block" $'on: push\npermissions: {}\njobs:\n  "build":\n    runs-on: ubuntu-24.04'
 perm_case "#83-AC3.1" "a top-level flow mapping" 1 "$W: top level: permissions must be {} (found: { contents: read })" $'on: push\npermissions: { contents: read }\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: {}'
+perm_case "#83-AC3.1" "a permissions flow mapping that does not close on its line" 1 "$W: job a: permissions flow mapping must close on its line" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: {\n      contents: write }'
 perm_case "#83-AC3.2" "a single job with its block" 0 '' $'on: push\npermissions: {}\njobs:\n  only:\n    runs-on: ubuntu-24.04\n    permissions:\n      contents: read\n    steps:\n      - run: echo hi'
 perm_case "#83-AC3.2" "a single job without a block" 1 "$W: job only: no permissions block" $'on: push\npermissions: {}\njobs:\n  only:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi'
 newroot
@@ -572,7 +628,7 @@ yaml_json() { # file: the file as JSON, with yq (the runner image has it) or its
     if command -v yq >/dev/null 2>&1; then
         yq -o=json . "$1" 2>/dev/null
     elif command -v docker >/dev/null 2>&1; then
-        docker run --rm -i mikefarah/yq -o=json . <"$1" 2>/dev/null
+        docker run --rm -i mikefarah/yq:4.54.3@sha256:7834187596ad56fd5a81436114e0b0b9dd54c91bb43946d1f7145b2be5f9c3d2 -o=json . <"$1" 2>/dev/null
     fi
 }
 dep="$root/.github/dependabot.yml"
@@ -631,6 +687,13 @@ if [ "$have_yq" = 1 ]; then
     printf 'name: e\nruns:\n  using: composite\n  steps:\n    - { uses: actions/checkout@main }\n' >"$R/tools/evil/action.yml"
     case_run "#83-AC1.1" "cross-check: a composite action outside .github is read too" "$cross" "$R" 1 \
         "only in yq: tools/evil/action.yml: uses actions/checkout@main"
+    newroot
+    mkdir -p "$R/.claude/evil" "$R/node_modules/pkg"
+    printf 'name: e\nruns:\n  using: composite\n  steps:\n    - { uses: actions/checkout@main }\n' >"$R/.claude/evil/action.yml"
+    printf 'name: e\nruns:\n  using: composite\n  steps:\n    - { uses: actions/checkout@v4 }\n' >"$R/node_modules/pkg/action.yml"
+    case_run "#83-AC1.2" "cross-check: tracked actions under .claude/ and node_modules/ are read too" "$cross" "$R" 1 \
+        "only in yq: .claude/evil/action.yml: uses actions/checkout@main
+only in yq: node_modules/pkg/action.yml: uses actions/checkout@v4"
     case_run "#83-AC1.1" "cross-check: the repository agrees" "$cross" "$root" 0 ''
     case_run "#83-AC1.2" "cross-check: a root that is not a directory is a usage error" "$cross" "$work/pins/none" 2 \
         "check-workflow-crosscheck.sh: $work/pins/none is not a directory"
@@ -652,12 +715,18 @@ else
 fi
 require "#83-AC4.9" "no 'A && B || C' guard is left in the linted scripts" \
     "$(grep -nE '\] && \[.*\] \|\| (die|usage)|\) && \[ -n .*\] \|\|$' "$root/tools/gh-lib.sh" "$root/tools/pr.sh" "$root/tools/ticket.sh" >/dev/null && echo 1 || echo 0)"
-for phrase in 'impostor' 'check-workflow-crosscheck.sh' 'fail on any form'; do
+for phrase in 'impostor' 'check-workflow-crosscheck.sh' 'fail on any form' 'git ls-files' 'not bumped' 'only the cross-check'; do
     require "#83-AC5" "Docs/workflow.md states: $phrase" "$(grep -qiF -- "$phrase" "$doc" && echo 0 || echo 1)"
 done
 skill="$root/.claude/skills/pr-review/SKILL.md"
 require "#83-AC5" "the pr-review skill has the pin step: the comment's tag resolves to the pinned SHA" \
     "$(grep -qi 'impostor' "$skill" && grep -q 'git/ref/tags' "$skill" && echo 0 || echo 1)"
 
+grep -q 'node_modules`, `.git` and `.claude` excepted' "$doc"
+require "#83-AC1.2" "Docs/workflow.md no longer says node_modules, .git and .claude are excepted" "$([ $? -ne 0 ] && echo 0 || echo 1)"
+grep -qE 'mikefarah/yq:[0-9.]+@sha256:[0-9a-f]{64}' "$cross"
+require "#83-AC5.9" "the cross-check's docker fallback pins yq by tag and digest" $?
+grep -rn 'mikefarah/yq ' "$cross" "$root/tools/tests/ci-tools.sh" | grep -v '^[^:]*:[0-9]*:[[:space:]]*#' >/dev/null
+require "#83-AC5.9" "no mikefarah/yq image without a tag and digest" "$([ $? -ne 0 ] && echo 0 || echo 1)"
 echo "ci tools: $pass passed, $failed failed"
 [ "$failed" -eq 0 ]
