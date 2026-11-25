@@ -487,6 +487,19 @@ t_ac3_codeowners_last_match() { # round 2: last matching line wins
         has "#82-AC3.1 ($line) may override $path" "FAIL: codeowners: later pattern may override $path"
         lacks "#82-AC3.1 ($line) is not ok for $path" "ok: codeowners: $path"
     done
+    new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'/Docs @evil\n'; run_check
+    rc_is "#82-AC3.1 a later anchored parent directory without a trailing slash overrides" 1
+    has "#82-AC3.1 /Docs @evil named" "FAIL: codeowners: /Docs/workflow.md: last matching line is \`/Docs @evil\`"
+    new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'/Docs/ @evil\n'; run_check
+    rc_is "#82-AC3.1 a later anchored parent directory with a trailing slash overrides" 1
+    has "#82-AC3.1 /Docs/ @evil named" "FAIL: codeowners: /Docs/workflow.md: last matching line is \`/Docs/ @evil\`"
+    new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'/Docs @rodgallert\n'; run_check
+    rc_is "#82-AC3.1 a later parent directory naming the owner is fine" 0
+    new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'*.md @evil\n/Docs/workflow.md @rodgallert\n'; run_check
+    has "#82-AC3.1 a later owner line resets the glob override for its own path" "ok: codeowners: /Docs/workflow.md"
+    has "#82-AC3.1 the other guarded paths still fail closed" "FAIL: codeowners: later pattern may override /tools/"
+    new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'*.md @evil\n'"$good_codeowners"; run_check
+    rc_is "#82-AC3.1 owner lines repeated after a glob reset every path" 0
     new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'*.md @rodgallert\n'; run_check
     rc_is "#82-AC3.1 a later glob naming the same owner is fine" 0
     new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'/tools/ @evil # @rodgallert\n'; run_check
