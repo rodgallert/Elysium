@@ -14,6 +14,10 @@
 # has a value after its colon or is an inline `{ ... }` mapping are offenders ("not a plain key", "not a plain
 # job key"), so a job written in a form this check cannot read is never skipped. tools/check-workflow-crosscheck.sh
 # compares the listing with what yq finds.
+# The guarantee that nothing hides is the action-pins job's: this script, tools/check-action-pins.sh and the yq
+# cross-check together. This script alone still passes some valid YAML that only the cross-check catches (an explicit
+# `? permissions` key, a quoted key written with an escape, a file with lone CR line breaks), so do not use it alone.
+# It reads the workflows git tracks (a new file must be `git add`ed), and a tracked symlink there is an offender.
 # Reads files only, plain POSIX sh (CI runs it under dash) and awk without GNU extensions. It understands the layout
 # the workflows use (block mappings, `permissions: {}` and one-line `{ key: value }` forms), not all of YAML.
 set -eu
@@ -30,14 +34,39 @@ if [ ! -d "$root" ]; then
 fi
 cd "$root"
 
-files="$(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | LC_ALL=C sort || true)"
-[ -n "$files" ] || exit 0
+if [ ! -e "$root/.git" ]; then
+    echo "check-workflow-permissions.sh: $root is not a git repository" >&2
+    exit 2
+fi
+# The workflows git tracks; a tracked symlink among them is an offender
+if ! listing="$(git -c core.quotePath=false ls-files -s 2>/dev/null)"; then
+    echo "check-workflow-permissions.sh: git cannot list the files of $root" >&2
+    exit 2
+fi
+tracked="$(printf '%s\n' "$listing" | awk -F'\t' '
+    {
+        split($1, m, " ")
+        path = substr($0, index($0, "\t") + 1)
+        if (path ~ /^[.]github\/workflows\/[^\/]+[.]ya?ml$/) print m[1] " " path
+    }' | LC_ALL=C sort -k2)"
+files="$(printf '%s\n' "$tracked" | awk '$1 != "120000" { sub(/^[^ ]+ /, ""); print }')"
+sym=""
+if [ "$mode" = check ]; then
+    sym="$(printf '%s\n' "$tracked" | awk '$1 == "120000" { sub(/^[^ ]+ /, ""); printf "%s: symlink\n", $0 }')"
+    [ -z "$sym" ] || printf '%s\n' "$sym"
+fi
+if [ -z "$files" ]; then
+    [ -z "$sym" ] || exit 1
+    exit 0
+fi
 
 IFS='
 '
 set -f
 # shellcheck disable=SC2086
-exec awk -v mode="$mode" '
+rc=0
+# shellcheck disable=SC2086
+awk -v mode="$mode" '
 function trim(s) {
     sub(/^[[:space:]]+/, "", s)
     sub(/[[:space:]]+$/, "", s)
@@ -86,6 +115,9 @@ function finish_job() {
     if (!has_perm) {
         problem[njobs] = "no permissions block"
         listing[njobs] = "(no permissions block)"
+    } else if (flow_open) {
+        problem[njobs] = "permissions flow mapping must close on its line"
+        listing[njobs] = "(open flow mapping)"
     } else if (scalar != "") {
         problem[njobs] = "permissions: " scalar " is not allowed"
         listing[njobs] = scalar
@@ -99,6 +131,7 @@ function finish_job() {
 }
 function reset_job() {
     has_perm = 0
+    flow_open = 0
     scalar = ""
     is_block = 0
     in_block = 0
@@ -215,6 +248,7 @@ indent == 0 {
             is_block = 1
             in_block = 1
         } else if (substr(v, 1, 1) == "{") {
+            if (v !~ /\}$/) flow_open = 1
             parse_flow(v)
         } else {
             scalar = v
@@ -225,4 +259,6 @@ END {
     if (NR > 0) end_file()
     exit bad ? 1 : 0
 }
-' $files
+' $files || rc=$?
+[ "$rc" -ne 0 ] || [ -z "$sym" ] || rc=1
+exit "$rc"

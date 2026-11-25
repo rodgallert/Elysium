@@ -392,6 +392,10 @@ git -C "$R" add -A
 printf 'name: e\nruns:\n  steps:\n    - uses: actions/checkout@main\n' >"$R/untracked/action.yml"
 NOGIT=1 case_run "#83-AC1.2" "a file git does not track is not scanned" "$pins" "$R" 0 ''
 newroot
+printf 'gitdir: /nonexistent\n' >"$R/.git"
+NOGIT=1 case_run "#83-AC1.2" "a repository git cannot read is an error, not an empty list" "$pins" "$R" 2 "check-action-pins.sh: git cannot list the files of $R"
+NOGIT=1 case_run "#83-AC3.2" "the permissions check says the same" "$perms" "$R" 2 "check-workflow-permissions.sh: git cannot list the files of $R"
+newroot
 NOGIT=1 case_run "#83-AC1.2" "a directory that is not a git repository is a usage error" "$pins" "$R" 2 "check-action-pins.sh: $R is not a git repository"
 
 newroot
@@ -433,12 +437,12 @@ case_run "#83-AC1.2" "a root that is not a directory is a usage error" "$pins" "
     "check-action-pins.sh: $work/pins/none is not a directory"
 
 # #83-AC1.6: the check reads files and nothing else; its header says so
-head -25 "$pins" | grep -qi 'network'
+head -45 "$pins" | grep -qi 'network'
 require "#83-AC1.6" "the header says the check does not use the network (a deleted SHA is found by GitHub)" $?
-head -25 "$pins" | grep -qi 'delet'
+head -45 "$pins" | grep -qi 'delet'
 require "#83-AC1.6" "the header says a deleted upstream SHA cannot be detected offline" $?
-grep -nE '(^|[|;&(]|[$][(])[[:space:]]*(curl|wget|gh|git|nc)[[:space:]]' "$pins" | grep -v '^[0-9]*:[[:space:]]*#' >/dev/null
-require "#83-AC1.6" "the script calls no network or git tool" "$([ $? -ne 0 ] && echo 0 || echo 1)"
+grep -nE '(^|[|;&(]|[$][(])[[:space:]]*(curl|wget|gh|git|nc)[[:space:]]' "$pins" | grep -v 'ls-files' | grep -v '^[0-9]*:[[:space:]]*#' >/dev/null
+require "#83-AC1.6" "the script calls no network tool and git only to list the tracked files" "$([ $? -ne 0 ] && echo 0 || echo 1)"
 
 # #83-AC1.7 idempotence: the check changes nothing and gives the same output every time
 newroot
@@ -715,7 +719,7 @@ else
 fi
 require "#83-AC4.9" "no 'A && B || C' guard is left in the linted scripts" \
     "$(grep -nE '\] && \[.*\] \|\| (die|usage)|\) && \[ -n .*\] \|\|$' "$root/tools/gh-lib.sh" "$root/tools/pr.sh" "$root/tools/ticket.sh" >/dev/null && echo 1 || echo 0)"
-for phrase in 'impostor' 'check-workflow-crosscheck.sh' 'fail on any form' 'git ls-files' 'not bumped' 'only the cross-check'; do
+for phrase in 'impostor' 'check-workflow-crosscheck.sh' 'spellings they do not read' 'git ls-files' 'not bumped' 'only the cross-check'; do
     require "#83-AC5" "Docs/workflow.md states: $phrase" "$(grep -qiF -- "$phrase" "$doc" && echo 0 || echo 1)"
 done
 skill="$root/.claude/skills/pr-review/SKILL.md"
@@ -726,7 +730,7 @@ grep -q 'node_modules`, `.git` and `.claude` excepted' "$doc"
 require "#83-AC1.2" "Docs/workflow.md no longer says node_modules, .git and .claude are excepted" "$([ $? -ne 0 ] && echo 0 || echo 1)"
 grep -qE 'mikefarah/yq:[0-9.]+@sha256:[0-9a-f]{64}' "$cross"
 require "#83-AC5.9" "the cross-check's docker fallback pins yq by tag and digest" $?
-grep -rn 'mikefarah/yq ' "$cross" "$root/tools/tests/ci-tools.sh" | grep -v '^[^:]*:[0-9]*:[[:space:]]*#' >/dev/null
-require "#83-AC5.9" "no mikefarah/yq image without a tag and digest" "$([ $? -ne 0 ] && echo 0 || echo 1)"
+grep -rn 'mikefarah/yq[ ]' "$cross" "$root/tools/tests/ci-tools.sh" | grep -v '^[^:]*:[0-9]*:[[:space:]]*#' >/dev/null
+require "#83-AC5.9" "every yq container image is pinned" "$([ $? -ne 0 ] && echo 0 || echo 1)"
 echo "ci tools: $pass passed, $failed failed"
 [ "$failed" -eq 0 ]

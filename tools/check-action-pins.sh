@@ -9,14 +9,20 @@
 #   - it fails on any form it does not read: a `uses` or `runs-on` key that is quoted, has a space before the colon or
 #     sits inside a `{ ... }` or `[ ... ]` (a flow mapping), is an offender "<unrecognised: uses>" or "<unrecognised:
 #     runs-on>", so quoting a key never hides a line.
-# A local reference (`uses: ./<path>`) needs an action.yml / action.yaml in that directory, or to be a workflow file.
-# The files are .github/workflows/*.yml and every action.yml / action.yaml in the repository (a local action can live
-# anywhere: `uses: ./tools/x`), except under node_modules, .git and .claude.
+# The files are the ones git tracks (`git ls-files -s`; a new file must be `git add`ed to be checked): the workflows
+# .github/workflows/*.yml and every action.yml / action.yaml in the repository, wherever it lives (a local action can:
+# `uses: ./tools/x`), with no directory skipped. A tracked symlink among them is an offender "<symlink>", and a local
+# reference passes only when it resolves to a scanned regular action.yml / action.yaml or a workflow file.
 # Usage: tools/check-action-pins.sh [--list] [repository root]   (default: the repository this script is in)
 # Output: one line per offender, "<file>:<line>: <ref>" (the `uses` value, or the `runs-on` value), nothing else, so
 # no other text of a workflow reaches the log. Exit 0 when nothing is wrong, 1 on offenders, 2 on a bad argument.
 # --list prints "<file>: uses <value>" and "<file>: runs-on <value>" for every key it reads, in line order, and exits 0;
-# tools/check-workflow-crosscheck.sh compares that with what yq finds.
+# --files prints the scanned files. tools/check-workflow-crosscheck.sh compares that with what yq finds.
+#
+# The guarantee that nothing hides is the action-pins job's: this script, tools/check-workflow-permissions.sh and the yq
+# cross-check together. This script alone refuses the forms listed above; it still passes some valid YAML that only the
+# cross-check catches: an explicit `? uses` key, a double-quoted key written with an escape (`"us\u0065s"`) and a file
+# with lone CR line breaks (yq splits lines on CR, awk does not). Do not use it alone as the check.
 #
 # Offline on purpose: it reads files and never uses the network. So it cannot see a commit that was deleted upstream
 # (GitHub fails that job when it downloads the action) or tell a tag that is named like a 40-character hex from a
@@ -25,8 +31,8 @@
 set -eu
 
 mode=check
-if [ "${1:-}" = "--list" ]; then
-    mode=list
+if [ "${1:-}" = "--list" ] || [ "${1:-}" = "--files" ]; then
+    mode="${1#--}"
     shift
 fi
 root="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -34,21 +40,38 @@ if [ ! -d "$root" ]; then
     echo "check-action-pins.sh: $root is not a directory" >&2
     exit 2
 fi
+if [ ! -e "$root/.git" ]; then
+    echo "check-action-pins.sh: $root is not a git repository" >&2
+    exit 2
+fi
 cd "$root"
 
-files="$({
-    find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null || true
-    find . \( -name node_modules -o -name .git -o -name .claude \) -prune -o -type f \
-        \( -name action.yml -o -name action.yaml \) -print 2>/dev/null | sed 's|^\./||' || true
-} | LC_ALL=C sort -u)"
-[ -n "$files" ] || exit 0
+# What git tracks, as "<mode> <path>" for the workflows and every action.yml / action.yaml; mode 120000 is a symlink
+if ! listing="$(git -c core.quotePath=false ls-files -s 2>/dev/null)"; then
+    echo "check-action-pins.sh: git cannot list the files of $root" >&2
+    exit 2
+fi
+selected="$(printf '%s\n' "$listing" | awk -F'\t' '
+    {
+        split($1, m, " ")
+        path = substr($0, index($0, "\t") + 1)
+        if (path ~ /^[.]github\/workflows\/[^\/]+[.]ya?ml$/ || path ~ /(^|\/)action[.]ya?ml$/) print m[1] " " path
+    }' | LC_ALL=C sort -k2)"
+files="$(printf '%s\n' "$selected" | awk '$1 != "120000" { sub(/^[^ ]+ /, ""); print }')"
+symlinks="$(printf '%s\n' "$selected" | awk '$1 == "120000" { sub(/^[^ ]+ /, ""); print }')"
+if [ "$mode" = files ]; then
+    [ -z "$files" ] || printf '%s\n' "$files"
+    exit 0
+fi
 
 # Every file name is a plain path; word splitting on newlines only, no globbing
 IFS='
 '
 set -f
-# shellcheck disable=SC2086
-exec awk -v mode="$mode" '
+out="$({
+    if [ -n "$files" ]; then
+        # shellcheck disable=SC2086
+        SCANNED="$files" awk -v mode="$mode" '
 function offender(ref) {
     if (mode == "list") return
     printf "%s:%d: %s\n", FILENAME, FNR, ref
@@ -61,6 +84,18 @@ function pinned(val,    n, parts) {
     if (parts[1] !~ "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(/[A-Za-z0-9_./-]+)?$") return 0
     if (length(parts[2]) != 40) return 0
     return parts[2] ~ "^[0-9a-f]+$"
+}
+# ./<dir> with a scanned regular <dir>/action.yml or .yaml, or ./.github/workflows/<name>.yml that is scanned. The path is
+# plain characters only, with no ., .. or empty segment; a symlink is never in the scanned set
+function local_ok(ref,    path, n, parts, i) {
+    if (ref !~ "^[A-Za-z0-9_./-]+$") return 0
+    path = substr(ref, 3)
+    sub(/\/$/, "", path)
+    if (path == "") return ("action.yml" in scanned) || ("action.yaml" in scanned)
+    n = split(path, parts, "/")
+    for (i = 1; i <= n; i++) if (parts[i] == "" || parts[i] == "." || parts[i] == "..") return 0
+    if (path ~ /^[.]github\/workflows\/[^\/]+[.]ya?ml$/) return (path in scanned)
+    return ((path "/action.yml") in scanned) || ((path "/action.yaml") in scanned)
 }
 # The value of a key and the comment after it: sets val (comment stripped, trimmed) and cmt
 function split_value(rest) {
@@ -77,6 +112,8 @@ function split_value(rest) {
     }
 }
 BEGIN {
+    n = split(ENVIRON["SCANNED"], scanned_list, "\n")
+    for (i = 1; i <= n; i++) scanned[scanned_list[i]] = 1
     q = "\047"
     uses_key = "(^|[^A-Za-z0-9_.-])[\"" q "]?uses[\"" q "]?[[:space:]]*:"
     runs_key = "(^|[^A-Za-z0-9_.-])[\"" q "]?runs-on[\"" q "]?[[:space:]]*:"
@@ -93,10 +130,8 @@ match(line, /^[[:space:]]*(-[[:space:]]+)?uses:/) {
     } else if (val == "") {
         offender("<empty>")
     } else if (substr(val, 1, 2) == "./") {
-        # a local action or workflow: nothing to pin, but it must exist (its action.yml is scanned like the rest).
-        # The path comes from a file, so only plain path characters ever reach the shell
-        if (val !~ "^[A-Za-z0-9_./-]+$") offender(val)
-        else if (system("[ -f \"" val "\" ] || [ -f \"" val "/action.yml\" ] || [ -f \"" val "/action.yaml\" ]") != 0) offender(val)
+        # a local action or workflow: nothing to pin, but it must be a scanned action.yml / action.yaml or a workflow
+        if (!local_ok(val)) offender(val)
     } else if (!pinned(val) || cmt !~ /^#[[:space:]]*v[0-9]+[.][0-9]+[.][0-9]+([-+[:space:]].*)?$/) {
         offender(val)
     }
@@ -119,5 +154,12 @@ index(FILENAME, ".github/workflows/") == 1 && match(line, /^[[:space:]]*runs-on:
     if (code ~ uses_key) offender("<unrecognised: uses>")
     if (index(FILENAME, ".github/workflows/") == 1 && code ~ runs_key) offender("<unrecognised: runs-on>")
 }
-END { exit bad ? 1 : 0 }
-' $files
+END { exit bad ? 1 : 0 }' $files || true
+    fi
+    if [ "$mode" = check ] && [ -n "$symlinks" ]; then
+        for f in $symlinks; do printf '%s:1: <symlink>\n' "$f"; done
+    fi
+} | LC_ALL=C sort -s -t: -k1,1)"
+[ -z "$out" ] || printf '%s\n' "$out"
+[ "$mode" = list ] || [ -z "$out" ] || exit 1
+exit 0

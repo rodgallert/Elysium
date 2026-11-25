@@ -1,6 +1,6 @@
 #!/bin/sh
 # Cross-checks the awk checks against a real YAML parser (#83). yq reads every workflow and every action.yml / action.yaml
-# (the same files tools/check-action-pins.sh reads) and lists each `uses` value, each job's `runs-on` and each job's
+# (the files tools/check-action-pins.sh --files lists: what git tracks) and lists each `uses` value, each job's `runs-on` and each job's
 # permissions; tools/check-action-pins.sh --list and tools/check-workflow-permissions.sh --list list the same things as
 # they read them. The two lists must be equal. A line the awk checks cannot read (a flow mapping, a quoted key, a job id
 # in quotes) is in yq's list and not theirs, and is printed as "only in yq: <file>: <what>".
@@ -22,7 +22,7 @@ perms="${PERMS:-$here/check-workflow-permissions.sh}"
 if command -v yq >/dev/null 2>&1; then
     yaml_json() { yq -o=json . "$1"; }
 elif command -v docker >/dev/null 2>&1; then
-    yaml_json() { docker run --rm -i mikefarah/yq -o=json . <"$1"; }
+    yaml_json() { docker run --rm -i mikefarah/yq:4.54.3@sha256:7834187596ad56fd5a81436114e0b0b9dd54c91bb43946d1f7145b2be5f9c3d2 -o=json . <"$1"; }
 else
     echo "check-workflow-crosscheck.sh: needs yq (or docker for mikefarah/yq)" >&2
     exit 2
@@ -32,11 +32,7 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 cd "$root"
 
-files="$({
-    find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null || true
-    find . \( -name node_modules -o -name .git -o -name .claude \) -prune -o -type f \
-        \( -name action.yml -o -name action.yaml \) -print 2>/dev/null | sed 's|^\./||' || true
-} | LC_ALL=C sort -u)"
+files="$(sh "$pins" --files "$root")"
 
 : >"$work/yq"
 status=0
