@@ -180,6 +180,7 @@ load_worktrees
 lockdir="$common/wt-sh-$cmd.$name.lock"
 holding=0
 release_lock() {
+    echo "$(date +%s.%N) $$ release holding=$holding" >>"$common/lock.trace"
     [ "$holding" -eq 1 ] && rm -rf -- "$lockdir"
     return 0
 }
@@ -188,10 +189,12 @@ take_lock() {
     for i in $(seq 1 100); do
         if mkdir -- "$lockdir" 2>/dev/null; then
             holding=1
+            echo "$(date +%s.%N) $$ got $lockdir" >>"$common/lock.trace"
             echo "$$" >"$lockdir/pid"
             return 0
         fi
         owner=$(cat "$lockdir/pid" 2>/dev/null || true)
+        echo "$(date +%s.%N) $$ busy owner=$owner" >>"$common/lock.trace"
         # an owner that finished releases the lock before it exits, so only a lock that is still there, with the same owner, after
         # the owner is seen to be gone was left behind
         if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null && [ "$(cat "$lockdir/pid" 2>/dev/null || true)" = "$owner" ]; then

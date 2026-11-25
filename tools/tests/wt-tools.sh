@@ -127,7 +127,7 @@ both_runs() {
     rc="$(cat "$work/c1.rc") $(cat "$work/c2.rc")"
     out="$(cat "$work/c1.out" "$work/c2.out")"
     err="$(cat "$work/c1.err" "$work/c2.err")"
-    err="$err"$'\n'"TRACE: $(cut -c1-150 "$sd/git.trace" 2>/dev/null | tr '\n' '|')"
+    err="$err"$'\n'"LOCK: $(tr '\n' '|' <"$repo/.git/lock.trace" 2>/dev/null) TRACE: $(cut -c1-150 "$sd/git.trace" 2>/dev/null | tr '\n' '|')"
 }
 
 # ---- #72-AC1: add -------------------------------------------------------------------------------------------------
