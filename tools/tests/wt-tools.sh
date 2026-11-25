@@ -386,7 +386,7 @@ test_ac1_decoy_tags() {
     w add feat/r
     check "#72-AC1.3 a tag named origin/feat/r: add of a remote-only branch exits 0" rc_is 0
     check "#72-AC1.3 a tag named origin/feat/r: checked out at the remote-tracking commit, not the tag" eq "$("$real_git" -C "$wtd/feat-r" rev-parse HEAD 2>/dev/null)" "$(g rev-parse refs/remotes/origin/feat/r)"
-    check "#72-AC1.3 a tag named origin/feat/r: still tracks origin/feat/r" eq "$("$real_git" -C "$wtd/feat-r" rev-parse --abbrev-ref '@{u}' 2>/dev/null)" origin/feat/r
+    check "#72-AC1.3 a tag named origin/feat/r: still tracks origin/feat/r" eq "$("$real_git" -C "$wtd/feat-r" rev-parse --symbolic-full-name '@{u}' 2>/dev/null)" refs/remotes/origin/feat/r
 
     # a tag named like the branch makes git's own name lookup ambiguous: refuse, never check out the tag's commit
     new_repo
