@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Stub rm for tools/tests/wt-tools.sh: behaves as rm, except that it fails (without deleting anything) when any argument is
+# $WT_RM_FAIL_UNDER or a path below it, to stand for a directory that cannot be deleted.
+for a in "$@"; do
+    case "${WT_RM_FAIL_UNDER:-}" in
+        "") break ;;
+    esac
+    case "$a" in
+        "$WT_RM_FAIL_UNDER" | "$WT_RM_FAIL_UNDER"/*)
+            echo "rm: stub: cannot remove '$a'" >&2
+            exit 1
+            ;;
+    esac
+done
+exec /bin/rm "$@"

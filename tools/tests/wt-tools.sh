@@ -640,6 +640,25 @@ test_ac2_5_concurrency() {
         check "#72-AC2.5 [$i] the worktree is gone" test ! -e "$wt"
         check "#72-AC2.5 [$i] git doesn't list it" unregistered "$wt"
     done
+
+    # a lock left by a run that was killed: never taken over (two runs could both take it); refused, naming the lock
+    new_repo
+    plain_wt feat/st
+    local dead lock="$repo/.git/wt-sh-rm.feat-st.lock"
+    true &
+    dead=$!
+    wait "$dead"
+    mkdir "$lock"
+    echo "$dead" >"$lock/pid"
+    w rm feat/st
+    check "#72-AC2.5 a lock whose owner is gone: rm refuses (exit 1)" rc_is 1
+    check "#72-AC2.5 a lock whose owner is gone: the refusal names the lock path" says "$lock"
+    check "#72-AC2.5 a lock whose owner is gone: it says to remove it" says "remove it"
+    check "#72-AC2.5 a lock whose owner is gone: the lock is not taken over" test -d "$lock"
+    check "#72-AC2.5 a lock whose owner is gone: the worktree stays" registered "$wt"
+    rm -rf "$lock"
+    w rm feat/st
+    check "#72-AC2.5 once the lock is removed, rm works (exit 0)" rc_is 0
 }
 
 test_ac2_6_partial() {
@@ -666,12 +685,61 @@ test_ac2_6_partial() {
         chmod 555 "$wt/junk"
         w rm feat/b
         chmod -R u+rwx "$wt/junk" 2>/dev/null
-        check "#72-AC2.6 a real deletion failure exits 1" rc_is 1
-        check "#72-AC2.6 a real deletion failure: registered with its directory, or neither" bash -c '
-            if "'"$real_git"'" -C "'"$repo"'" worktree list --porcelain | grep -qxF "worktree '"$wt"'"; then [ -d "'"$wt"'" ]; else true; fi'
+        check "#72-AC2.6 a real deletion failure (a read-only ignored directory) is finished by wt.sh: exit 0" rc_is 0
+        check "#72-AC2.6 a real deletion failure: the directory is gone, never left unregistered with files" test ! -e "$wt"
+        check "#72-AC2.6 a real deletion failure: git no longer lists it" unregistered "$wt"
+        check "#72-AC2.6 a real deletion failure: it says what it removed" says "removed: $wt"
+
+        # the deletion cannot be finished: git dropped the registration, the files are still there; say so, and say so again on a retry
+        new_repo
+        plain_wt feat/k
+        WT_GIT_FAIL=remove-keep-dir WT_RM_FAIL_UNDER="$wt" w rm feat/k
+        check "#72-AC2.6 a deletion that cannot be finished exits 1" rc_is 1
+        check "#72-AC2.6 a deletion that cannot be finished: says the directory still holds files" says "$wt still holds files"
+        check "#72-AC2.6 a deletion that cannot be finished: tells to delete it by hand" says "delete it by hand"
+        check "#72-AC2.6 a deletion that cannot be finished: the directory stays" test -f "$wt/file.txt"
+        check "#72-AC2.6 a deletion that cannot be finished: it is not registered" unregistered "$wt"
+        w rm feat/k
+        check "#72-AC2.6 the retry refuses (exit 1)" rc_is 1
+        check "#72-AC2.6 the retry says git no longer lists the directory" says "git no longer lists it"
+        check "#72-AC2.6 the retry tells to delete it by hand" says "delete it by hand"
+        check "#72-AC2.6 the retry deletes nothing" test -f "$wt/file.txt"
+        w rm --force feat/k
+        check "#72-AC2.6 the retry with --force refuses too (exit 1)" rc_is 1
     else
         echo "note: running as root, so the permission-based deletion failure case is skipped"
     fi
+
+    # worktree.useRelativePaths (git 2.48 and later): the admin directory's gitdir file holds a relative path
+    new_repo
+    g config worktree.useRelativePaths true
+    plain_wt feat/rel
+    if grep -q '^\.\./' "$repo/.git/worktrees/feat-rel/gitdir"; then
+        WT_GIT_FAIL=remove-after-delete w rm feat/rel
+        check "#72-AC2.6 relative worktree paths: a failure while deleting exits 1" rc_is 1
+        check "#72-AC2.6 relative worktree paths: no registered entry with a missing directory" unregistered "$wt"
+        check "#72-AC2.6 relative worktree paths: the admin directory is gone" test ! -e "$repo/.git/worktrees/feat-rel"
+    else
+        echo "note: this git writes absolute worktree paths, so the useRelativePaths case is skipped"
+    fi
+
+    # another run's removal finishes while git reports a failure: the worktree is gone for good, so there is nothing to remove
+    new_repo
+    plain_wt feat/set
+    WT_GIT_FAIL=remove-then-fail w rm feat/set
+    check "#72-AC2.5 git fails but the worktree is gone for good: exit 0" rc_is 0
+    check "#72-AC2.5 git fails but the worktree is gone for good: says nothing to remove" says "nothing to remove"
+    check "#72-AC2.5 git fails but the worktree is gone for good: the directory is gone" test ! -e "$wt"
+
+    # registered but its directory is missing: refuses, and names the one entry to delete (never the repository-wide prune)
+    new_repo
+    g worktree add -q -b gone "$wtd/gone"
+    rm -rf "$wtd/gone"
+    w rm gone
+    check "#72-AC2.6 a registered worktree whose directory is missing refuses (exit 1)" rc_is 1
+    check "#72-AC2.6 a missing directory: names the entry in git's worktrees directory" says "$repo/.git/worktrees/gone"
+    check "#72-AC2.6 a missing directory: does not advise the repository-wide prune" silent_on "prune"
+    check "#72-AC2.6 a missing directory: the entry stays" registered "$wtd/gone"
 }
 
 test_ac2_7_idempotence() {
