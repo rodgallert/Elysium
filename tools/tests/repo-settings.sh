@@ -399,71 +399,116 @@ t_ac3_rulesets_in_force() { # round 2: enforcement, target, bypass, up-to-date, 
     for n in "Protect main:1" "Release branches:3"; do
         id=${n#*:}; n=${n%:*}
         new_world; put "rulesets_$id" "$(ruleset_json "$n" 0 15368 true false false | jq -c '.enforcement = "disabled"')"; run_check
-        rc_is "#82-AC3 $n disabled fails" 1
-        has "#82-AC3 $n disabled named" "FAIL: ruleset $n: enforcement: disabled"
+        rc_is "#82-AC3.3 $n disabled fails" 1
+        has "#82-AC3.3 $n disabled named" "FAIL: ruleset $n: enforcement: disabled"
         new_world; put "rulesets_$id" "$(ruleset_json "$n" 0 15368 true false false | jq -c '.enforcement = "evaluate"')"; run_check
-        rc_is "#82-AC3 $n in evaluate mode fails" 1
-        has "#82-AC3 $n evaluate named" "FAIL: ruleset $n: enforcement: evaluate"
+        rc_is "#82-AC3.3 $n in evaluate mode fails" 1
+        has "#82-AC3.3 $n evaluate named" "FAIL: ruleset $n: enforcement: evaluate"
         new_world; put "rulesets_$id" "$(ruleset_json "$n" 0 15368 true false false | jq -c '.conditions.ref_name.include = ["refs/heads/nothing"]')"; run_check
-        rc_is "#82-AC3 $n retargeted fails" 1
-        has "#82-AC3 $n retargeted named" "FAIL: ruleset $n: conditions: [\"refs/heads/nothing\"]"
+        rc_is "#82-AC3.3 $n retargeted fails" 1
+        has "#82-AC3.3 $n retargeted named" "FAIL: ruleset $n: conditions: [\"refs/heads/nothing\"]"
         new_world; put "rulesets_$id" "$(ruleset_json "$n" 0 15368 true false false | jq -c '.conditions.ref_name.exclude = ["~DEFAULT_BRANCH"]')"; run_check
-        rc_is "#82-AC3 $n with an exclude fails" 1
-        has "#82-AC3 $n exclude named" "FAIL: ruleset $n: conditions"
+        rc_is "#82-AC3.3 $n with an exclude fails" 1
+        has "#82-AC3.3 $n exclude named" "FAIL: ruleset $n: conditions"
         new_world; put "rulesets_$id" "$(ruleset_json "$n" 0 15368 true false false | jq -c '.bypass_actors = [{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"always"}]')"; run_check
-        rc_is "#82-AC3 $n with a bypass actor fails" 1
-        has "#82-AC3 $n bypass named" "FAIL: ruleset $n: bypass_actors: 1"
+        rc_is "#82-AC3.8 $n with a bypass actor fails" 1
+        has "#82-AC3.8 $n bypass named" "FAIL: ruleset $n: bypass_actors: 1"
         new_world; put "rulesets_$id" "$(ruleset_json "$n" 0 15368 true false false | jq -c '.bypass_actors = null')"; run_check
-        rc_is "#82-AC3 $n with null bypass_actors (as the API reads none) is fine" 0
+        rc_is "#82-AC3.8 $n with a present null bypass_actors is none" 0
+        new_world; put "rulesets_$id" "$(ruleset_json "$n" 0 15368 true false false | jq -c 'del(.bypass_actors)')"; run_check
+        rc_is "#82-AC3.8 $n with no bypass_actors key (unreadable) fails" 1
+        has "#82-AC3.8 $n missing bypass_actors is cannot read" "FAIL: ruleset $n: bypass_actors: cannot read"
+        lacks "#82-AC3.8 $n missing bypass_actors is not ok" "ok: ruleset $n: bypass_actors"
         new_world; put "rulesets_$id" "$(ruleset_json "$n" 0 15368 true false false | jq -c '(.rules[]|select(.type=="required_status_checks")|.parameters.strict_required_status_checks_policy) = false')"; run_check
-        rc_is "#82-AC3 $n without up-to-date fails" 1
-        has "#82-AC3 $n strict named" "FAIL: ruleset $n: strict_required_status_checks_policy: false"
+        rc_is "#82-AC3.3 $n without up-to-date fails" 1
+        has "#82-AC3.3 $n strict named" "FAIL: ruleset $n: strict_required_status_checks_policy: false"
         new_world; put "rulesets_$id" "$(ruleset_json "$n" 0 15368 true false false | jq -c '.target = "tag"')"; run_check
-        rc_is "#82-AC3 $n target tag fails" 1
-        has "#82-AC3 $n target named" "FAIL: ruleset $n: target: tag"
+        rc_is "#82-AC3.3 $n target tag fails" 1
+        has "#82-AC3.3 $n target named" "FAIL: ruleset $n: target: tag"
     done
     new_world
     put rulesets_per_page_100 '[{"id":5,"name":"Protect main"},{"id":1,"name":"Protect main"},{"id":3,"name":"Release branches"}]'
     put_ruleset 5 "Protect main" 0 15368 true false false
     put "rulesets_5" "$(ruleset_json "Protect main" 0 15368 true false false | jq -c '.enforcement = "disabled"')"
     run_check
-    rc_is "#82-AC3 a duplicate ruleset name fails" 1
-    has "#82-AC3 duplicate named" "FAIL: ruleset Protect main: duplicate name (2 rulesets)"
-    lacks "#82-AC3 a duplicate is not read as the first" "ok: ruleset Protect main"
+    rc_is "#82-AC3.1 a duplicate ruleset name fails" 1
+    has "#82-AC3.1 duplicate named" "FAIL: ruleset Protect main: duplicate name (2 rulesets)"
+    lacks "#82-AC3.1 a duplicate is not read as the first" "ok: ruleset Protect main"
     new_world; run_check
-    called "#82-AC3 the ruleset list asks for 100 per page" "rulesets?per_page=100"
+    called "#82-AC3.2 the ruleset list asks for 100 per page" "rulesets?per_page=100"
+    # #82-AC3.2: a ruleset on a later page is still checked (the stub serves page 2 when a .page2 file exists)
+    new_world
+    put rulesets_per_page_100 '[{"id":1,"name":"Protect main"}]'
+    put rulesets_per_page_100.page2 '[{"id":3,"name":"Release branches"}]'
+    run_check
+    rc_is "#82-AC3.2 a ruleset only on page 2 is found and checked" 0
+    has "#82-AC3.2 page 2 ruleset checked" "ok: ruleset Release branches: enforcement"
+    called "#82-AC3.2 the list is paginated" "--paginate"
+    new_world
+    put rulesets_per_page_100 '[{"id":1,"name":"Protect main"}]'
+    put rulesets_per_page_100.page2 '[{"id":5,"name":"Protect main"},{"id":3,"name":"Release branches"}]'
+    put_ruleset 5 "Protect main" 0 15368 true false false
+    run_check
+    rc_is "#82-AC3.2 a duplicate across pages fails" 1
+    has "#82-AC3.2 the duplicate across pages named" "FAIL: ruleset Protect main: duplicate name (2 rulesets)"
+    new_world
+    put rulesets_per_page_100 '[{"id":1,"name":"Protect main"}]'
+    put rulesets_per_page_100.page2 '[{"id":3,"name":"Release branches"}]'
+    put_ruleset 3 "Release branches" 0 15368 false false false
+    run_check
+    rc_is "#82-AC3.2 a bad ruleset on page 2 fails" 1
 }
+
 t_ac3_codeowners_last_match() { # round 2: last matching line wins
     new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'* @someone-else\n'; run_check
-    rc_is "#82-AC3 a later * line overrides every owner" 1
-    has "#82-AC3 the override is named" "FAIL: codeowners: /tools/: last matching line is \`* @someone-else\`"
+    rc_is "#82-AC3.1 a later * line overrides every owner" 1
+    has "#82-AC3.1 the override is named" "FAIL: codeowners: /tools/: last matching line is \`* @someone-else\`"
     new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'/tools/ @someone-else\n'; run_check
-    rc_is "#82-AC3 a later same-path line overrides" 1
-    has "#82-AC3 same-path override named" "FAIL: codeowners: /tools/: last matching line is \`/tools/ @someone-else\`"
-    lacks "#82-AC3 the other paths stay ok" "FAIL: codeowners: /.github/"
+    rc_is "#82-AC3.1 a later same-path line overrides" 1
+    has "#82-AC3.1 same-path override named" "FAIL: codeowners: /tools/: last matching line is \`/tools/ @someone-else\`"
+    lacks "#82-AC3.1 the other paths stay ok" "FAIL: codeowners: /.github/"
     new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'/tools/\n'; run_check
-    rc_is "#82-AC3 a later line with no owner unsets it" 1
+    rc_is "#82-AC3.1 a later line with no owner unsets it" 1
     new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'/tools/scripts/ @someone-else\n'; run_check
-    rc_is "#82-AC3 a later line for a path inside a guarded one fails" 1
+    rc_is "#82-AC3.1 a later line for a path inside a guarded one fails" 1
     new_world; put contents_.github_CODEOWNERS $'* @someone-else\n'"$good_codeowners"; run_check
-    rc_is "#82-AC3 an earlier * line is overridden by the specific lines" 0
+    rc_is "#82-AC3.1 an earlier * line is overridden by the specific lines" 0
     new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'/unrelated/ @someone-else\n# * @someone-else\n'; run_check
-    rc_is "#82-AC3 later lines for other paths and comments do not matter" 0
+    rc_is "#82-AC3.1 later lines for other paths and comments do not matter" 0
     new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'/tools/ @someone-else @rodgallert\n'; run_check
-    rc_is "#82-AC3 the owner among several owners is enough" 0
+    rc_is "#82-AC3.1 the owner among several owners is enough" 0
+    local line path
+    for line in 'workflow.md @evil|/Docs/workflow.md' '**/workflow.md @evil|/Docs/workflow.md' '*.md @evil|/Docs/workflow.md' \
+        '/Docs/* @evil|/Docs/workflow.md' '/Docs/** @evil|/Docs/workflow.md' '*.yml @evil|/docker-compose.prod.yml' \
+        'docker-compose.* @evil|/docker-compose.prod.yml' '**/tools/ @evil|/tools/' '/to?ls/ @evil|/tools/' '/tools/[a-z]* @evil|/tools/'; do
+        path=${line#*|}; line=${line%|*}
+        new_world; put contents_.github_CODEOWNERS "$good_codeowners$line"$'\n'; run_check
+        rc_is "#82-AC3.1 a later glob or unanchored line ($line) fails" 1
+        has "#82-AC3.1 ($line) may override $path" "FAIL: codeowners: later pattern may override $path"
+        lacks "#82-AC3.1 ($line) is not ok for $path" "ok: codeowners: $path"
+    done
+    new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'*.md @rodgallert\n'; run_check
+    rc_is "#82-AC3.1 a later glob naming the same owner is fine" 0
+    new_world; put contents_.github_CODEOWNERS "$good_codeowners"$'/tools/ @evil # @rodgallert\n'; run_check
+    rc_is "#82-AC3.1 an inline comment is not an owner" 1
+    has "#82-AC3.1 the inline comment is stripped" "FAIL: codeowners: /tools/: last matching line is \`/tools/ @evil\`"
+    new_world; put contents_.github_CODEOWNERS "${good_codeowners//@rodgallert/@rodgallert # the PO}"; run_check
+    rc_is "#82-AC3.1 owners followed by an inline comment still count" 0
+    new_world; put contents_.github_CODEOWNERS $'*.md @evil\n'"$good_codeowners"; run_check
+    rc_is "#82-AC3.1 a glob before the owner lines is overridden by them" 0
 }
 t_ac3_ref_label() { # round 2: with a ref the lines name it
     new_world
     mv "$STUB_DIR/api/codeowners_errors" "$STUB_DIR/api/codeowners_errors_ref_chore_x"
     mv "$STUB_DIR/api/contents_.github_CODEOWNERS" "$STUB_DIR/api/contents_.github_CODEOWNERS_ref_chore_x"
     run_check REPO_SETTINGS_REF=chore/x
-    has "#82-AC3 errors line names the ref" "ok: codeowners errors (ref chore/x)"
-    has "#82-AC3 owner lines name the ref" "ok: codeowners (ref chore/x): /tools/"
+    has "#82-AC1.8 errors line names the ref" "ok: codeowners errors (ref chore/x)"
+    has "#82-AC1.8 owner lines name the ref" "ok: codeowners (ref chore/x): /tools/"
     new_world; run_check
-    has "#82-AC3 without a ref the lines are unchanged" "ok: codeowners: /tools/"
+    has "#82-AC1.8 without a ref the lines are unchanged" "ok: codeowners: /tools/"
     new_world; mv "$STUB_DIR/api/contents_.github_CODEOWNERS" "$STUB_DIR/api/contents_.github_CODEOWNERS_ref_chore_x"; mv "$STUB_DIR/api/codeowners_errors" "$STUB_DIR/api/codeowners_errors_ref_chore_x"
     fail_with contents_.github_CODEOWNERS_ref_chore_x 404; run_check REPO_SETTINGS_REF=chore/x
-    has "#82-AC3 a failure names the ref" "FAIL: codeowners (ref chore/x): cannot read"
+    has "#82-AC1.8 a failure names the ref" "FAIL: codeowners (ref chore/x): cannot read"
 }
 
 # ---- #82-AC4: docs --------------------------------------------------------------------------------------------------
