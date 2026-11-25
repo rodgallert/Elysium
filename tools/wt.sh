@@ -174,6 +174,34 @@ exists() { [ -e "$1" ] || [ -L "$1" ]; }
 load_worktrees
 [ "${#WT_PATH[@]}" -ge 1 ] || refuse "$(show "$branch"): cannot list the repository's worktrees"
 
+# take_lock: one add or rm at a time per worktree name, so two runs never both pass the checks (and both report a removal, or
+# one clean up the other's checkout); the lock is a directory in git's own directory holding the owner's pid. A lock whose owner is gone is never taken over (two runs could
+# both take it): it is refused by name, and whoever runs this removes it
+lockdir="$common/wt-sh-$cmd.$name.lock"
+holding=0
+release_lock() {
+    [ "$holding" -eq 1 ] && rm -rf -- "$lockdir"
+    return 0
+}
+take_lock() {
+    local i owner
+    for i in $(seq 1 100); do
+        if mkdir -- "$lockdir" 2>/dev/null; then
+            holding=1
+            echo "$$" >"$lockdir/pid"
+            return 0
+        fi
+        owner=$(cat "$lockdir/pid" 2>/dev/null || true)
+        # an owner that finished releases the lock before it exits, so only a lock that is still there, with the same owner, after
+        # the owner is seen to be gone was left behind
+        if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null && [ "$(cat "$lockdir/pid" 2>/dev/null || true)" = "$owner" ]; then
+            refuse "$(show "$branch"): $lockdir was left by a run that is gone (or that you cannot signal); if no wt.sh run is active, remove it (rm -r) and run again"
+        fi
+        sleep 0.1
+    done
+    refuse "$(show "$branch"): another wt.sh run holds $lockdir"
+}
+
 # ---- add -------------------------------------------------------------------------------------------------------------
 
 claimed=0
@@ -190,6 +218,10 @@ cleanup_add() {
     fi
     if [ "$made_parent" -eq 1 ]; then rmdir "$wtroot" 2>/dev/null; fi
     return 0
+}
+finish_add() {
+    cleanup_add
+    release_lock
 }
 
 # check_parents <shown>: the directory worktrees live in must really be inside the repository (add and rm both): no symlinked
@@ -209,6 +241,8 @@ do_add() {
     shown=$(show "$b")
     [ "${#path}" -le 255 ] || refuse "$shown: the path would be ${#path} characters, over the limit of 255: $path"
     check_parents "$shown"
+    take_lock
+    load_worktrees
 
     if find_by_path "$path"; then
         if [ "${WT_BRANCH[IDX]}" = "refs/heads/$b" ]; then
@@ -321,34 +355,6 @@ drop_registration() {
     local d
     d=$(admin_of "$1") || return 1
     rm -rf -- "$d"
-}
-
-# take_lock: one rm at a time per worktree name, so two runs never both pass the checks and both report a removal; the lock is
-# a directory in git's own directory holding the owner's pid. A lock whose owner is gone is never taken over (two runs could
-# both take it): it is refused by name, and whoever runs this removes it
-lockdir="$common/wt-sh-rm.$name.lock"
-holding=0
-release_lock() {
-    [ "$holding" -eq 1 ] && rm -rf -- "$lockdir"
-    return 0
-}
-take_lock() {
-    local i owner
-    for i in $(seq 1 100); do
-        if mkdir -- "$lockdir" 2>/dev/null; then
-            holding=1
-            echo "$$" >"$lockdir/pid"
-            return 0
-        fi
-        owner=$(cat "$lockdir/pid" 2>/dev/null || true)
-        # an owner that finished releases the lock before it exits, so only a lock that is still there, with the same owner, after
-        # the owner is seen to be gone was left behind
-        if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null && [ "$(cat "$lockdir/pid" 2>/dev/null || true)" = "$owner" ]; then
-            refuse "$(show "$branch"): $lockdir was left by a run that is gone (or that you cannot signal); if no wt.sh run is active, remove it (rm -r) and run again"
-        fi
-        sleep 0.1
-    done
-    refuse "$(show "$branch"): another wt.sh run holds $lockdir"
 }
 
 do_rm() {
@@ -472,7 +478,7 @@ do_rm() {
 
 case "$cmd" in
     add)
-        trap cleanup_add EXIT
+        trap finish_add EXIT
         trap 'exit 130' INT TERM
         do_add
         ;;

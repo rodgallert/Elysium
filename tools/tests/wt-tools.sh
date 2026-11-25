@@ -344,6 +344,23 @@ test_ac1_5_concurrency() {
         check "#72-AC1.5 [claim $i] its checkout is complete" test -f "$wtd/feat-e/file.txt"
         check "#72-AC1.5 [claim $i] no other directory is left" eq "$(ls -A "$wtd")" feat-e
     done
+    # a lock left by an add that was killed: refused by name, nothing created
+    new_repo
+    g branch feat/sl
+    local dead lock="$repo/.git/wt-sh-add.feat-sl.lock"
+    true &
+    dead=$!
+    wait "$dead"
+    mkdir "$lock"
+    echo "$dead" >"$lock/pid"
+    w add feat/sl
+    check "#72-AC1.5 a lock whose owner is gone: add refuses (exit 1)" rc_is 1
+    check "#72-AC1.5 a lock whose owner is gone: the refusal names the lock path" says "$lock"
+    check "#72-AC1.5 a lock whose owner is gone: nothing is created" is_empty_or_absent "$wtd"
+    rm -rf "$lock"
+    w add feat/sl
+    check "#72-AC1.5 once the lock is removed, add works (exit 0)" rc_is 0
+    check "#72-AC1.5 add leaves no lock behind" test ! -e "$lock"
 }
 
 test_ac1_6_partial() {
