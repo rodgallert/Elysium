@@ -279,25 +279,52 @@ settled() {
     return 1
 }
 
-# drop_registration <path>: removes the git bookkeeping of exactly this worktree (no git worktree prune, which would touch
-# other entries too); true when it found and removed it
-drop_registration() {
+# lexnorm <absolute path>: the path with . and .. components collapsed lexically (the target may no longer exist)
+lexnorm() {
+    local part parts out=()
+    IFS=/ read -ra parts <<<"$1"
+    for part in "${parts[@]}"; do
+        case "$part" in
+            "" | .) ;;
+            ..) [ "${#out[@]}" -eq 0 ] || unset 'out[${#out[@]}-1]' ;;
+            *) out+=("$part") ;;
+        esac
+    done
+    if [ "${#out[@]}" -eq 0 ]; then echo /; else printf '/%s' "${out[@]}"; echo; fi
+}
+
+# admin_of <path>: prints git's administrative directory of exactly this worktree, found by the gitdir file inside it (an
+# absolute path, or one relative to that directory when worktree.useRelativePaths is on); false when there is none
+admin_of() {
     local d g
     for d in "$common"/worktrees/*/; do
         d="${d%/}"
         if [ ! -d "$d" ] || [ -L "$d" ]; then continue; fi
         [ -f "$d/gitdir" ] || continue
         g=$(<"$d/gitdir")
-        if [ "$g" = "$1/.git" ]; then
-            rm -rf -- "$d"
+        case "$g" in
+            /*) ;;
+            *) g="$d/$g" ;;
+        esac
+        if [ "$(lexnorm "$g")" = "$1/.git" ]; then
+            printf '%s\n' "$d"
             return 0
         fi
     done
     return 1
 }
 
+# drop_registration <path>: removes the git bookkeeping of exactly this worktree (no git worktree prune, which would touch
+# other entries too); true when it found and removed it
+drop_registration() {
+    local d
+    d=$(admin_of "$1") || return 1
+    rm -rf -- "$d"
+}
+
 # take_lock: one rm at a time per worktree name, so two runs never both pass the checks and both report a removal; the lock is
-# a directory in git's own directory holding the owner's pid, and one whose owner is gone is taken over
+# a directory in git's own directory holding the owner's pid. A lock whose owner is gone is never taken over (two runs could
+# both take it): it is refused by name, and whoever runs this removes it
 lockdir="$common/wt-sh-rm.$name.lock"
 holding=0
 release_lock() {
@@ -313,11 +340,12 @@ take_lock() {
             return 0
         fi
         owner=$(cat "$lockdir/pid" 2>/dev/null || true)
-        if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
-            rm -rf -- "$lockdir"
-        else
-            sleep 0.1
+        # an owner that finished releases the lock before it exits, so only a lock that is still there, with the same owner, after
+        # the owner is seen to be gone was left behind
+        if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null && [ "$(cat "$lockdir/pid" 2>/dev/null || true)" = "$owner" ]; then
+            refuse "$(show "$branch"): $lockdir was left by a run that is gone (or that you cannot signal); if no wt.sh run is active, remove it (rm -r) and run again"
         fi
+        sleep 0.1
     done
     refuse "$(show "$branch"): another wt.sh run holds $lockdir"
 }
@@ -340,7 +368,7 @@ do_rm() {
     if ! find_by_branch "$b"; then
         if ! find_by_path "$path"; then
             if exists "$path"; then
-                refuse "$shown: $path is not a registered worktree of this repository, so it is not ours to delete (it must be under $wtroot)"
+                refuse "$shown: $path is not a registered worktree of this repository (git no longer lists it; a removal that failed half way leaves such a directory: delete it by hand if you are sure), so it is not ours to delete (it must be under $wtroot)"
             fi
             echo "nothing to remove: $shown has no worktree"
             exit 0
@@ -355,7 +383,8 @@ do_rm() {
             echo "nothing to remove: $shown has no worktree"
             exit 0
         fi
-        refuse "$shown: registered at $p but its directory is missing; git worktree prune clears it"
+        msg=$(admin_of "$p") || msg="its entry under $common/worktrees"
+        refuse "$shown: registered at $p but its directory is missing; delete git's entry for it ($msg) to clear it"
     fi
     real=$(phys "$p") || refuse "$shown: $p cannot be resolved"
     # the registered path itself must be a plain directory (no symlink in it) under the literal <root>/.claude/worktrees/
@@ -415,8 +444,27 @@ do_rm() {
         exit 0
     fi
     msg=$(show "$(printf '%s\n' "$msg" | tail -n 1)")
-    if find_by_path "$p" && [ ! -e "$p" ]; then
-        drop_registration "$p" && msg="$msg (the stale registration was cleared)"
+    if find_by_path "$p"; then
+        # still registered: with its directory gone the stale entry is cleared (only this one), otherwise it is left as it was
+        if [ ! -e "$p" ]; then
+            drop_registration "$p" && msg="$msg (the stale registration was cleared)"
+        else
+            msg="$msg (the worktree is still registered)"
+        fi
+        refuse "$shown: git worktree remove failed: $msg"
+    fi
+    # git dropped the registration but could not delete everything: finish it here (never through a symlink), or say what is left
+    if [ -d "$real" ] && [ ! -L "$real" ] && [ "$(phys "$real")" = "$real" ]; then
+        # find does not follow symlinks; every directory gets owner access first, so a read-only one does not stop the deletion
+        find "$real" -type d -exec chmod u+rwx {} \; 2>/dev/null
+        if rm -rf -- "$real" 2>/dev/null && [ ! -e "$real" ]; then
+            echo "removed: $real"
+            echo "$note_remote"
+            exit 0
+        fi
+    fi
+    if [ -e "$real" ]; then
+        refuse "$shown: git worktree remove failed: $msg; git no longer lists the worktree, but $real still holds files: delete it by hand"
     fi
     refuse "$shown: git worktree remove failed: $msg"
 }
