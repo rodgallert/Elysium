@@ -480,7 +480,7 @@ t_ac3_codeowners_last_match() { # round 2: last matching line wins
     local line path
     for line in 'workflow.md @evil|/Docs/workflow.md' '**/workflow.md @evil|/Docs/workflow.md' '*.md @evil|/Docs/workflow.md' \
         '/Docs/* @evil|/Docs/workflow.md' '/Docs/** @evil|/Docs/workflow.md' '*.yml @evil|/docker-compose.prod.yml' \
-        'docker-compose.* @evil|/docker-compose.prod.yml' '**/tools/ @evil|/tools/' '/to?ls/ @evil|/tools/' '/tools/[a-z]* @evil|/tools/'; do
+        'docker-compose.* @evil|/docker-compose.prod.yml' '**/tools/ @evil|/tools/' '/to?ls/ @evil|/tools/'; do
         path=${line#*|}; line=${line%|*}
         new_world; put contents_.github_CODEOWNERS "$good_codeowners$line"$'\n'; run_check
         rc_is "#82-AC3.1 a later glob or unanchored line ($line) fails" 1

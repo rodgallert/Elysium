@@ -136,7 +136,12 @@ check_ruleset() { # <name> <expected ref include> (both rulesets must also dismi
     val=$(jq -c '.conditions.ref_name // {} | if .include != [$i] then (.include | tostring) elif (.exclude // []) != [] then "exclude " + (.exclude | tostring) else "ok" end' --arg i "$include" <<<"$body")
     val=$(jq -r . <<<"$val")
     check "ruleset $name: conditions" "$val" ok
-    check "ruleset $name: bypass_actors" "$(jq -r '(.bypass_actors // []) | length' <<<"$body")" 0
+    # a missing key means the read could not see it (a token without admin access), never "none"; a present null or [] is none
+    if jq -e 'has("bypass_actors")' <<<"$body" >/dev/null; then
+        check "ruleset $name: bypass_actors" "$(jq -r '(.bypass_actors // []) | length' <<<"$body")" 0
+    else
+        fail "ruleset $name: bypass_actors" "cannot read"
+    fi
     gate=$(jq -c '[.rules[]? | select(.type == "required_status_checks") | .parameters.required_status_checks[]? | select(.context == "gate")][0] // empty' <<<"$body")
     if [ -z "$gate" ]; then
         fail "ruleset $name: required status check gate" missing
@@ -158,7 +163,9 @@ check_ruleset() { # <name> <expected ref include> (both rulesets must also dismi
     check "ruleset $name: dismiss_stale_reviews_on_push" "$(jq -r '.dismiss_stale_reviews_on_push | tostring' <<<"$pr")" true
 }
 rulesets=""
-if api "$repo/rulesets?per_page=100" && jq -e 'type == "array"' <<<"$GH_OUT" >/dev/null 2>&1; then rulesets="$GH_OUT"; fi
+if api "$repo/rulesets?per_page=100" --paginate --slurp && jq -e 'type == "array" and all(.[]; type == "array")' <<<"$GH_OUT" >/dev/null 2>&1; then
+    rulesets=$(jq -c 'add // []' <<<"$GH_OUT")
+fi
 check_ruleset "Protect main" "~DEFAULT_BRANCH"
 check_ruleset "Release branches" "refs/heads/release/**"
 
@@ -173,32 +180,41 @@ else
     fail "codeowners errors${ref:+ (ref $ref)}" "cannot read"
 fi
 # GitHub applies the last line that matches a path, so the owner of a guarded path is the owner on the last line that
-# covers it: the same path, a parent (a glob like *, or a directory), or a path inside it.
-codeowners_effective() { # stdin: the file. Prints, per guarded path, "ok|<path>" or "fail|<path>|<last matching line>"
+# covers it: the same path, a parent (a catch-all like *, or a directory) or a path inside it. Matching globs is not
+# reimplemented: after the line that sets a guarded path's owner, any later line with a glob (* ? [) or an unanchored
+# pattern (no leading /) that doesn't name the owner may override it, so the path fails closed.
+codeowners_effective() { # stdin: the file. Prints, per guarded path, "ok|<path>", "fail|<path>|<line>" or "risk|<path>|<line>"
     awk -v o="@$owner" '
         BEGIN { n = split("/.github/ /tools/ /docker-compose.prod.yml /Docs/workflow.md", P, " ") }
-        { sub(/\r$/, ""); sub(/[ \t]+$/, "") }
+        { sub(/\r$/, ""); sub(/[ \t]+#.*$/, ""); sub(/[ \t]+$/, "") }
         /^[ \t]*(#|$)/ { next }
         {
-            pat = $1
-            if (pat !~ /^\// && pat !~ /\*/) pat = "/" pat
+            pat = $1; names = 0
+            for (k = 2; k <= NF; k++) if ($k == o) names = 1
+            risky = (pat ~ /[*?\[]/ || pat !~ /^\//)
             for (i = 1; i <= n; i++) {
                 p = P[i]; q = p; sub(/\/$/, "", q)
                 if (pat == p || pat == q || pat == "*" || pat == "**" || pat == "/" || pat == "/*" || pat == "/**" ||
-                    substr(pat, 1, length(p)) == p || (pat ~ /\/$/ && index(p, pat) == 1)) last[i] = $0
+                    substr(pat, 1, length(p)) == p || (pat ~ /\/$/ && index(p, pat) == 1)) {
+                    last[i] = $0; lastnames[i] = names; risk[i] = ""
+                } else if (risky && (i in last) && !names && risk[i] == "") risk[i] = $0
             }
         }
         END {
             for (i = 1; i <= n; i++) {
-                found = 0; m = split(last[i], F, /[ \t]+/)
-                for (k = 2; k <= m; k++) if (F[k] == o) found = 1
-                if (found) print "ok|" P[i]; else print "fail|" P[i] "|" (last[i] == "" ? "none" : last[i])
+                if (!lastnames[i]) print "fail|" P[i] "|" (last[i] == "" ? "none" : last[i])
+                else if (risk[i] != "") print "risk|" P[i] "|" risk[i]
+                else print "ok|" P[i]
             }
         }'
 }
 if api "$repo/contents/.github/CODEOWNERS$q" -H "Accept: application/vnd.github.raw+json"; then
     while IFS='|' read -r res path line; do
-        if [ "$res" = ok ]; then pass "$lbl: $path"; else fail "$lbl: $path" "last matching line is \`$line\`"; fi
+        case "$res" in
+            ok) pass "$lbl: $path" ;;
+            risk) fail "$lbl" "later pattern may override $path: \`$line\`" ;;
+            *) fail "$lbl: $path" "last matching line is \`$line\`" ;;
+        esac
     done < <(codeowners_effective <<<"$GH_OUT")
 else
     fail "$lbl" "cannot read"
