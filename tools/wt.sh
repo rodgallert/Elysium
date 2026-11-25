@@ -25,10 +25,6 @@
 set -uo pipefail
 export LC_ALL=C
 unset CDPATH
-# git's own environment (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, ... as set inside a hook) would point every git call at
-# another repository or at the main copy instead of the worktree it is about
-# shellcheck disable=SC2046 # the list of names is meant to split
-unset $(git rev-parse --local-env-vars 2>/dev/null)
 
 name_of_script=wt.sh
 usage() {
@@ -108,6 +104,11 @@ git check-ref-format "refs/heads/$branch" 2>/dev/null || bad_name "$branch" "git
 name="${branch//\//-}"
 
 # ---- the repository --------------------------------------------------------------------------------------------------
+
+# git's own environment (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, ... as set inside a hook) would point every git call at
+# another repository or at the main copy instead of the worktree it is about
+# shellcheck disable=SC2046 # the list of names is meant to split
+unset $(git rev-parse --local-env-vars 2>/dev/null)
 
 common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || refuse "$(show "$branch"): not in a git repository"
 common=$(phys "$common") || refuse "$(show "$branch"): cannot read the repository's git directory"
