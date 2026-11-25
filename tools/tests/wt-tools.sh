@@ -122,6 +122,13 @@ err_nonempty() { [ -n "$err" ]; }
 err_lines_at_most() { [ "$(printf '%s\n' "$err" | grep -c '')" -le "$1" ]; }
 one_line() { [ "$(printf '%s' "$err" | grep -c '')" -eq 1 ]; }
 
+# both_runs: the two concurrent runs' exit codes and output, as $rc, $out and $err (what a failing check prints)
+both_runs() {
+    rc="$(cat "$work/c1.rc") $(cat "$work/c2.rc")"
+    out="$(cat "$work/c1.out" "$work/c2.out")"
+    err="$(cat "$work/c1.err" "$work/c2.err")"
+}
+
 # ---- #72-AC1: add -------------------------------------------------------------------------------------------------
 
 test_ac1_add() {
@@ -304,7 +311,8 @@ test_ac1_5_concurrency() {
         (runw "$work/c1" add feat/c) &
         (runw "$work/c2" add feat/c) &
         wait
-        rcs="$(cat "$work/c1.rc") $(cat "$work/c2.rc")"
+        both_runs
+        rcs="$rc"
         check "#72-AC1.5 [$i] two adds for one branch: one exit 0, the other 0 or 1 ($rcs)" bash -c 'case "'"$rcs"'" in "0 0" | "0 1" | "1 0") true ;; *) false ;; esac'
         check "#72-AC1.5 [$i] exactly one worktree was created" eq "$(nwt)" 2
         check "#72-AC1.5 [$i] its checkout is complete" test -f "$wtd/feat-c/file.txt"
@@ -316,7 +324,8 @@ test_ac1_5_concurrency() {
         (runw "$work/c1" add --new feat/q) &
         (runw "$work/c2" add --new feat/q) &
         wait
-        rcs="$(cat "$work/c1.rc") $(cat "$work/c2.rc")"
+        both_runs
+        rcs="$rc"
         check "#72-AC1.5 [new $i] two adds with --new: not both refused ($rcs)" bash -c 'case "'"$rcs"'" in "0 0" | "0 1" | "1 0") true ;; *) false ;; esac'
         check "#72-AC1.5 [new $i] exactly one worktree was created" eq "$(nwt)" 2
         check "#72-AC1.5 [new $i] the winner's checkout is complete" test -f "$wtd/feat-q/file.txt"
@@ -634,6 +643,7 @@ test_ac2_5_concurrency() {
         (runw "$work/c1" rm feat/r) &
         (runw "$work/c2" rm feat/r) &
         wait
+        both_runs
         check "#72-AC2.5 [$i] both rm runs exit 0" bash -c '[ "$(cat "'"$work"'/c1.rc")" = 0 ] && [ "$(cat "'"$work"'/c2.rc")" = 0 ]'
         check "#72-AC2.5 [$i] exactly one says removed" eq "$(cat "$work/c1.out" "$work/c2.out" | grep -c '^removed: ')" 1
         check "#72-AC2.5 [$i] the other says nothing to remove" eq "$(cat "$work/c1.out" "$work/c2.out" | grep -c 'nothing to remove')" 1
