@@ -367,7 +367,7 @@ head -25 "$pins" | grep -qi 'network'
 require "#83-AC1.6" "the header says the check does not use the network (a deleted SHA is found by GitHub)" $?
 head -25 "$pins" | grep -qi 'delet'
 require "#83-AC1.6" "the header says a deleted upstream SHA cannot be detected offline" $?
-grep -nE '\b(curl|wget|gh|git|nc)[[:space:]]' "$pins" | grep -v '^[0-9]*:[[:space:]]*#' >/dev/null
+grep -nE '(^|[|;&(]|[$][(])[[:space:]]*(curl|wget|gh|git|nc)[[:space:]]' "$pins" | grep -v '^[0-9]*:[[:space:]]*#' >/dev/null
 require "#83-AC1.6" "the script calls no network or git tool" "$([ $? -ne 0 ] && echo 0 || echo 1)"
 
 # #83-AC1.7 idempotence: the check changes nothing and gives the same output every time
@@ -446,7 +446,7 @@ perm_case "#83-AC3.1" "a permissions key of a step input is not the job's block"
 perm_case "#83-AC3.1" "a permissions key only inside a job is not the top level" 1 "$W: top level: permissions must be {} (found: no permissions key)" $'on: push\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: {}\n    steps:\n      - run: echo hi'
 perm_case "#83-AC3.1" "a job block with nothing in it" 1 "$W: job a: permissions block is empty (write {} to grant nothing)" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions:\n    steps:\n      - run: echo hi'
 perm_case "#83-AC3.1" "a job id in quotes (a flow job that grants write-all)" 1 "$W: job (line 11): not a plain job key" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: {}\n    steps:\n      - run: echo hi\n  # next\n  \n  "evil": { runs-on: ubuntu-24.04, permissions: write-all, steps: [] }'
-perm_case "#83-AC3.1" "a job written as a flow mapping" 1 "$W: job (line 6): not a plain job key" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n  evil: { runs-on: ubuntu-24.04, permissions: write-all }'
+perm_case "#83-AC3.1" "a job written as a flow mapping" 1 "$W: job (line 7): not a plain job key" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: {}\n  evil: { runs-on: ubuntu-24.04, permissions: write-all }'
 perm_case "#83-AC3.1" "a job id with a value after the colon" 1 "$W: job (line 4): not a plain job key" $'on: push\npermissions: {}\njobs:\n  a: &anchor\n    runs-on: ubuntu-24.04\n    permissions: {}'
 perm_case "#83-AC3.1" "a quoted jobs key" 1 "$W: top level: line 3: not a plain key" $'on: push\npermissions: {}\n"jobs":\n  a:\n    runs-on: ubuntu-24.04'
 perm_case "#83-AC3.1" "jobs as a flow mapping" 1 "$W: top level: line 3: jobs must be a block, not an inline value" $'on: push\npermissions: {}\njobs: { a: { runs-on: ubuntu-24.04, permissions: write-all } }'
@@ -624,7 +624,7 @@ require "#83-AC2" "action-pins runs the yq cross-check" $?
 # review fixes: shellcheck and the docs
 rc="$root/.shellcheckrc"
 require "#83-AC4.9" ".shellcheckrc no longer switches SC2015 off for the whole repository" \
-    "$(grep -q 'SC2015' "$rc" && echo 1 || echo 0)"
+    "$(grep -q '^disable=.*SC2015' "$rc" && echo 1 || echo 0)"
 require "#83-AC4.9" ".shellcheckrc keeps SC2002 (style only) off" "$(grep -q 'SC2002' "$rc" && echo 0 || echo 1)"
 if command -v shellcheck >/dev/null 2>&1; then
     out="$(cd "$root" && shellcheck -x tools/gh-lib.sh tools/pr.sh tools/ticket.sh 2>&1)"

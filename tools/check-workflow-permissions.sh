@@ -10,6 +10,10 @@
 # are none, 1 on offenders, 2 on a bad argument. With --list it prints each job's grants instead, one line per job,
 # "<file>: job <name>: <key:value ...>" sorted (or "none"), and exits 0: the PR description's table and the test that no
 # job gained a permission read it.
+# It fails closed: a top-level key that is not a plain `name:`, `jobs:` with a value after it, and a job id that is
+# quoted, has a value after its colon or is an inline `{ ... }` mapping are offenders ("not a plain key", "not a plain
+# job key"), so a job written in a form this check cannot read is never skipped. tools/check-workflow-crosscheck.sh
+# compares the listing with what yq finds.
 # Reads files only, plain POSIX sh (CI runs it under dash) and awk without GNU extensions. It understands the layout
 # the workflows use (block mappings, `permissions: {}` and one-line `{ key: value }` forms), not all of YAML.
 set -eu
@@ -105,12 +109,21 @@ function end_file(    i, topproblem) {
     finish_job()
     if (!top_seen) topproblem = "no permissions key"
     else if (top_val != "{}") topproblem = (top_val == "" ? "a block" : top_val)
+    for (i = 1; i <= ntops; i++) {
+        if (mode == "check") {
+            printf "%s: top level: %s\n", cur_file, tops[i]
+            bad = 1
+        }
+        delete tops[i]
+    }
     if (mode == "check" && topproblem != "") {
         printf "%s: top level: permissions must be {} (found: %s)\n", cur_file, topproblem
         bad = 1
     }
     for (i = 1; i <= njobs; i++) {
-        if (mode == "list") printf "%s: job %s: %s\n", cur_file, jobs[i], listing[i]
+        if (mode == "list") {
+            if (substr(jobs[i], 1, 1) != "(") printf "%s: job %s: %s\n", cur_file, jobs[i], listing[i]
+        }
         else if (problem[i] != "") {
             printf "%s: job %s: %s\n", cur_file, jobs[i], problem[i]
             bad = 1
@@ -122,6 +135,7 @@ function end_file(    i, topproblem) {
         delete listing[i]
     }
     njobs = 0
+    ntops = 0
 }
 function start_file() {
     cur_file = FILENAME
@@ -130,6 +144,7 @@ function start_file() {
     in_jobs = 0
     job_indent = 0
     in_top_block = 0
+    ntops = 0
     reset_job()
     job = ""
 }
@@ -150,7 +165,16 @@ indent == 0 {
     in_jobs = 0
     in_top_block = 0
     finish_job()
+    if (line ~ /^(---|[.][.][.])/) next
+    if (line !~ /^[A-Za-z_][A-Za-z0-9_-]*:/) {
+        tops[++ntops] = "line " FNR ": not a plain key"
+        next
+    }
     k = key_of(line)
+    if (k == "jobs" && value_of(line) != "") {
+        tops[++ntops] = "line " FNR ": jobs must be a block, not an inline value"
+        next
+    }
     if (k == "permissions") {
         top_seen = 1
         top_val = value_of(line)
@@ -163,10 +187,16 @@ indent == 0 {
 !in_jobs { next }
 {
     if (job_indent == 0) job_indent = indent
-    if (indent == job_indent && line ~ /^ *[A-Za-z_][A-Za-z0-9_-]*:/) {
+    if (indent == job_indent) {
         finish_job()
-        job = key_of(line)
         reset_job()
+        if (line ~ /^ *[A-Za-z_][A-Za-z0-9_-]*:[[:space:]]*(#.*)?$/) {
+            job = key_of(line)
+        } else {
+            jobs[++njobs] = "(line " FNR ")"
+            problem[njobs] = "not a plain job key"
+            listing[njobs] = "(not a plain job key)"
+        }
         next
     }
     if (job == "") next

@@ -87,6 +87,10 @@ jobs:
         run: tools/check-action-pins.sh
       - name: No permissions by default, a block on every job
         run: tools/check-workflow-permissions.sh
+      # yq (the runner image has it) lists every uses, runs-on and job with its permissions; the two checks above must
+      # have read exactly the same, so a form they cannot read cannot hide a line
+      - name: yq reads the same jobs, permissions, actions and runners
+        run: tools/check-workflow-crosscheck.sh
 
   dotnet:
     needs: changes
