@@ -351,13 +351,12 @@ test_ac1_5_concurrency() {
     true &
     dead=$!
     wait "$dead"
-    mkdir "$lock"
-    echo "$dead" >"$lock/pid"
+    echo "$dead" >"$lock"
     w add feat/sl
     check "#72-AC1.5 a lock whose owner is gone: add refuses (exit 1)" rc_is 1
     check "#72-AC1.5 a lock whose owner is gone: the refusal names the lock path" says "$lock"
     check "#72-AC1.5 a lock whose owner is gone: nothing is created" is_empty_or_absent "$wtd"
-    rm -rf "$lock"
+    rm -f "$lock"
     w add feat/sl
     check "#72-AC1.5 once the lock is removed, add works (exit 0)" rc_is 0
     check "#72-AC1.5 add leaves no lock behind" test ! -e "$lock"
@@ -688,15 +687,14 @@ test_ac2_5_concurrency() {
     true &
     dead=$!
     wait "$dead"
-    mkdir "$lock"
-    echo "$dead" >"$lock/pid"
+    echo "$dead" >"$lock"
     w rm feat/st
     check "#72-AC2.5 a lock whose owner is gone: rm refuses (exit 1)" rc_is 1
     check "#72-AC2.5 a lock whose owner is gone: the refusal names the lock path" says "$lock"
     check "#72-AC2.5 a lock whose owner is gone: it says to remove it" says "remove it"
-    check "#72-AC2.5 a lock whose owner is gone: the lock is not taken over" test -d "$lock"
+    check "#72-AC2.5 a lock whose owner is gone: the lock is not taken over" eq "$(cat "$lock")" "$dead"
     check "#72-AC2.5 a lock whose owner is gone: the worktree stays" registered "$wt"
-    rm -rf "$lock"
+    rm -f "$lock"
     w rm feat/st
     check "#72-AC2.5 once the lock is removed, rm works (exit 0)" rc_is 0
 }
