@@ -10,7 +10,6 @@
 #   network              fetch, pull, push, ls-remote, clone and remote update fail
 set -u
 printf '%s\n' "$*" >>"$STUB_DIR/git.log"
-printf '%s %s %s\n' "$PPID" "$(date +%s.%N)" "$*" >>"$STUB_DIR/git.trace"
 
 sub=""
 skip=0
