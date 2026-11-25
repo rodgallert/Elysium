@@ -363,6 +363,67 @@ test_ac1_9_environment() {
     check "#72-AC1.9 outside any repository: says it is not in a git repository" says "not in a git repository"
 }
 
+# a tag called origin/main or origin/<branch> must not be taken for the remote-tracking ref
+test_ac1_decoy_tags() {
+    local other
+    new_repo
+    other=$(g commit-tree -m decoy "$(g rev-parse 'main^{tree}')")
+    g tag origin/main "$other"
+    w add --new feat/n
+    check "#72-AC1.3 a tag named origin/main: add --new exits 0" rc_is 0
+    check "#72-AC1.3 a tag named origin/main: starts from refs/remotes/origin/main, not the tag" eq "$("$real_git" -C "$wtd/feat-n" rev-parse HEAD 2>/dev/null)" "$(g rev-parse refs/remotes/origin/main)"
+
+    new_repo
+    "$real_git" clone -q "$origin" "$work/clone$n"
+    "$real_git" -C "$work/clone$n" switch -q -c feat/r
+    echo r >"$work/clone$n/r.txt"
+    "$real_git" -C "$work/clone$n" add r.txt
+    "$real_git" -C "$work/clone$n" commit -qm r
+    "$real_git" -C "$work/clone$n" push -q origin feat/r
+    g fetch -q origin
+    other=$(g commit-tree -m decoy "$(g rev-parse 'main^{tree}')")
+    g tag origin/feat/r "$other"
+    w add feat/r
+    check "#72-AC1.3 a tag named origin/feat/r: add of a remote-only branch exits 0" rc_is 0
+    check "#72-AC1.3 a tag named origin/feat/r: checked out at the remote-tracking commit, not the tag" eq "$("$real_git" -C "$wtd/feat-r" rev-parse HEAD 2>/dev/null)" "$(g rev-parse refs/remotes/origin/feat/r)"
+    check "#72-AC1.3 a tag named origin/feat/r: still tracks origin/feat/r" eq "$("$real_git" -C "$wtd/feat-r" rev-parse --abbrev-ref '@{u}' 2>/dev/null)" origin/feat/r
+
+    # a tag named like the branch makes git's own name lookup ambiguous: refuse, never check out the tag's commit
+    new_repo
+    g branch feat/t
+    other=$(g commit-tree -m decoy "$(g rev-parse 'main^{tree}')")
+    g tag feat/t "$other"
+    w add feat/t
+    check "#72-AC1.3 a tag named like the local branch: add refuses (exit 1)" rc_is 1
+    check "#72-AC1.3 a tag named like the local branch: says a tag has that name" says "a tag named feat/t"
+    check "#72-AC1.3 a tag named like the local branch: nothing is created" is_empty_or_absent "$wtd"
+}
+
+# git's own environment (GIT_DIR, GIT_WORK_TREE, as inside a hook) points at the main copy, never at a worktree
+test_ac1_9_git_environment() {
+    new_repo
+    plain_wt feat/g
+    wcommit unpushed.txt
+    W_GIT_DIR="$repo/.git" W_GIT_WORK_TREE="$repo" w rm feat/g
+    check "#72-AC2.9 GIT_DIR and GIT_WORK_TREE set: a worktree with an unpushed commit still refuses (exit 1)" rc_is 1
+    check "#72-AC2.9 GIT_DIR and GIT_WORK_TREE set: the refusal counts the commit" says "1 unpushed commit"
+    check "#72-AC2.9 GIT_DIR and GIT_WORK_TREE set: the worktree stays" registered "$wt"
+
+    new_repo
+    plain_wt feat/h
+    echo dirty >"$wt/file.txt"
+    W_GIT_DIR="$repo/.git" W_GIT_WORK_TREE="$repo" w rm feat/h
+    check "#72-AC2.9 GIT_DIR and GIT_WORK_TREE set: a dirty worktree still refuses (exit 1)" rc_is 1
+    check "#72-AC2.9 GIT_DIR and GIT_WORK_TREE set: the refusal counts the file" says "1 uncommitted file"
+
+    new_repo
+    g branch feat/a
+    W_GIT_DIR="$repo/.git" W_GIT_WORK_TREE="$repo" w add feat/a
+    check "#72-AC1.9 GIT_DIR and GIT_WORK_TREE set: add exits 0" rc_is 0
+    check "#72-AC1.9 GIT_DIR and GIT_WORK_TREE set: the branch is checked out in the new worktree" eq "$("$real_git" -C "$wtd/feat-a" symbolic-ref --short HEAD 2>/dev/null)" feat/a
+    check "#72-AC1.9 GIT_DIR and GIT_WORK_TREE set: the main copy is untouched" main_untouched
+}
+
 test_ac1_10_observability() {
     new_repo
     g worktree add -q -b feat/o "$work/hand$n"
@@ -841,7 +902,7 @@ test_lint() {
     fi
 }
 
-all_tests=(test_ac1_add test_ac1_1_inputs test_ac1_2_boundaries test_ac1_3_state test_ac1_5_concurrency test_ac1_6_partial test_ac1_9_environment \
+all_tests=(test_ac1_add test_ac1_1_inputs test_ac1_2_boundaries test_ac1_3_state test_ac1_5_concurrency test_ac1_6_partial test_ac1_9_environment test_ac1_decoy_tags test_ac1_9_git_environment \
     test_ac1_10_observability test_ac1_8_permissions test_ac2_clean test_ac2_2_boundaries test_ac2_3_state test_ac2_1_inputs test_ac2_5_concurrency \
     test_ac2_6_partial test_ac2_7_idempotence test_ac2_9_environment test_ac2_10_observability test_ac3_symlinks test_ac3_rm_symlinked_parents test_ac3_outside_and_unregistered \
     test_ac4_docs test_lint)
