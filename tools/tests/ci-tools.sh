@@ -280,7 +280,6 @@ pin_bad() { # id, name, step lines, the ref as it is printed
 pin_ok "#83-AC1.1" "a full SHA with a version comment" "      - uses: actions/checkout@$s40 # v4.4.0"
 pin_ok "#83-AC1.1" "a SHA with the release tag it came from" "      - uses: docker/build-push-action@$s40 # v7.4.0"
 pin_ok "#83-AC1.1" "an action in a sub-path" "      - uses: github/codeql-action/analyze@$s40 # v3.28.1"
-pin_ok "#83-AC1.1" "a local action" "      - uses: ./.github/actions/release-image"
 pin_ok "#83-AC1.1" "a uses key after a name key" $'      - name: Checkout\n        uses: actions/checkout@'"$s40 # v4.4.0"
 pin_ok "#83-AC1.1" "a commented-out uses is not a uses" "      # - uses: actions/checkout@v4"
 pin_bad "#83-AC1.1" "@v4" "      - uses: actions/checkout@v4" "actions/checkout@v4"
@@ -347,6 +346,22 @@ case_run "#83-AC1.10" "--list prints every runs-on and uses value, in line order
 $W: uses actions/checkout@$s40
 $W: uses ./.github/actions/x" --list
 
+# a local `./` reference must have its action.yml (or be a workflow file) in the repository (#83-AC1.2)
+local_case() { # name, expected exit code, expected output, uses value, files to create (relative paths)
+    newroot
+    local f
+    for f in $5; do
+        mkdir -p "$R/$(dirname "$f")"
+        printf 'name: x\nruns:\n  using: composite\n  steps:\n    - run: echo hi\n' >"$R/$f"
+    done
+    printf '%s\n%s\n' "$HDR" "      - uses: $4" >"$R/$W"
+    case_run "#83-AC1.2" "$1" "$pins" "$R" "$2" "$3"
+}
+local_case "a local action with its action.yml" 0 '' "./.github/actions/release-image" ".github/actions/release-image/action.yml"
+local_case "a local action outside .github with action.yaml" 0 '' "./ci/release" "ci/release/action.yaml"
+local_case "a local reusable workflow that exists" 0 '' "./.github/workflows/other.yml" ".github/workflows/other.yml"
+local_case "a local path with no action.yml" 1 "$W:9: ./tools/nope" "./tools/nope" ""
+local_case "a local path with a shell character" 1 "$W:9: ./a;b" "./a;b" ""
 # #83-AC1.2 boundaries
 newroot
 printf 'name: t\non: push\njobs:\n  j:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n' >"$R/$W"
@@ -454,6 +469,9 @@ perm_case "#83-AC3.1" "a quoted top-level permissions key" 1 "$W: top level: lin
 $W: top level: permissions must be {} (found: no permissions key)" $'on: push\n"permissions": {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: {}'
 perm_case "#83-AC3.1" "a quoted job-level permissions key" 1 "$W: job a: no permissions block" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    "permissions": write-all'
 perm_case "#83-AC3.1" "a space before the colon in a job's permissions" 1 "$W: job a: no permissions block" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions : write-all'
+perm_case "#83-AC3.1" "a quoted job name with its block is read as the job it names" 0 '' $'on: push\npermissions: {}\njobs:\n  "build":\n    runs-on: ubuntu-24.04\n    permissions: {}\n  \'test\':\n    runs-on: ubuntu-24.04\n    permissions:\n      contents: read'
+perm_case "#83-AC3.1" "a quoted job name without a block is named" 1 "$W: job build: no permissions block" $'on: push\npermissions: {}\njobs:\n  "build":\n    runs-on: ubuntu-24.04'
+perm_case "#83-AC3.1" "a top-level flow mapping" 1 "$W: top level: permissions must be {} (found: { contents: read })" $'on: push\npermissions: { contents: read }\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: {}'
 perm_case "#83-AC3.2" "a single job with its block" 0 '' $'on: push\npermissions: {}\njobs:\n  only:\n    runs-on: ubuntu-24.04\n    permissions:\n      contents: read\n    steps:\n      - run: echo hi'
 perm_case "#83-AC3.2" "a single job without a block" 1 "$W: job only: no permissions block" $'on: push\npermissions: {}\njobs:\n  only:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi'
 newroot
