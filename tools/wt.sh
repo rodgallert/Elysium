@@ -187,18 +187,23 @@ cleanup_add() {
     return 0
 }
 
-do_add() {
-    local b="$branch" shown real other i
-    shown=$(show "$b")
-    [ "${#path}" -le 255 ] || refuse "$shown: the path would be ${#path} characters, over the limit of 255: $path"
-
-    # the directory the worktree goes in must really be inside the repository: no symlinked .claude or .claude/worktrees
+# check_parents <shown>: the directory worktrees live in must really be inside the repository (add and rm both): no symlinked
+# .claude or .claude/worktrees, so the literal <root>/.claude/worktrees/ is also the real one
+check_parents() {
+    local p real
     for p in "$root/.claude" "$wtroot"; do
         if exists "$p"; then
-            real=$(phys "$p") || refuse "$shown: $p cannot be resolved"
-            [ "$real" = "$p" ] || refuse "$shown: $p resolves to $real, which is not the directory it must be (a real directory under $root)"
+            real=$(phys "$p") || refuse "$1: $p cannot be resolved"
+            [ "$real" = "$p" ] || refuse "$1: $p resolves to $real, which is not the directory it must be (a real directory under $root); nothing was changed"
         fi
     done
+}
+
+do_add() {
+    local b="$branch" shown other
+    shown=$(show "$b")
+    [ "${#path}" -le 255 ] || refuse "$shown: the path would be ${#path} characters, over the limit of 255: $path"
+    check_parents "$shown"
 
     if find_by_path "$path"; then
         if [ "${WT_BRANCH[IDX]}" = "refs/heads/$b" ]; then
@@ -312,8 +317,9 @@ take_lock() {
 }
 
 do_rm() {
-    local b="$branch" shown real wtroot_real cwd i p problems n up msg
+    local b="$branch" shown real cwd p problems n up msg
     shown=$(show "$b")
+    check_parents "$shown"
     take_lock
     load_worktrees
 
@@ -346,13 +352,13 @@ do_rm() {
         refuse "$shown: registered at $p but its directory is missing; git worktree prune clears it"
     fi
     real=$(phys "$p") || refuse "$shown: $p cannot be resolved"
-    wtroot_real=$(phys "$wtroot") || wtroot_real="$wtroot"
+    # the registered path itself must be a plain directory (no symlink in it) under the literal <root>/.claude/worktrees/
     if [ "$real" != "$p" ]; then
-        refuse "$shown: $p resolves to $real, which is not a plain directory under $wtroot_real; nothing was deleted"
+        refuse "$shown: $p resolves to $real, which is not a plain directory under $wtroot; nothing was deleted"
     fi
-    case "$real" in
-        "$wtroot_real"/?*) ;;
-        *) refuse "$shown: $real is not inside $wtroot_real; nothing was deleted" ;;
+    case "$p" in
+        "$wtroot"/?*) ;;
+        *) refuse "$shown: $p is not inside $wtroot; nothing was deleted" ;;
     esac
     [ "$real" != "$root" ] || refuse "$shown: $real is the main working copy, never removed"
 
