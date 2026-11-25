@@ -27,7 +27,8 @@ if [ "${1:-}" = "--list" ]; then
     mode=list
     shift
 fi
-root="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
+here="$(cd "$(dirname "$0")" && pwd)"
+root="${1:-$(cd "$here/.." && pwd)}"
 if [ ! -d "$root" ]; then
     echo "check-workflow-permissions.sh: $root is not a directory" >&2
     exit 2
@@ -38,21 +39,20 @@ if [ ! -e "$root/.git" ]; then
     echo "check-workflow-permissions.sh: $root is not a git repository" >&2
     exit 2
 fi
-# The workflows git tracks; a tracked symlink among them is an offender
-if ! listing="$(git -c core.quotePath=false ls-files -s 2>/dev/null)"; then
+# The workflows git tracks (tools/tracked-ci-files.sh); a symlink, a non-regular file or an unsafe name is an offender
+if ! records="$(sh "$here/tracked-ci-files.sh" "$root")"; then
     echo "check-workflow-permissions.sh: git cannot list the files of $root" >&2
     exit 2
 fi
-tracked="$(printf '%s\n' "$listing" | awk -F'\t' '
-    {
-        split($1, m, " ")
-        path = substr($0, index($0, "\t") + 1)
-        if (path ~ /^[.]github\/workflows\/[^\/]+[.]ya?ml$/) print m[1] " " path
-    }' | LC_ALL=C sort -k2)"
-files="$(printf '%s\n' "$tracked" | awk '$1 != "120000" { sub(/^[^ ]+ /, ""); print }')"
+workflows="$(printf '%s\n' "$records" | awk '{ p = substr($0, 3) } p ~ /^[.]github\/workflows\// { print }')"
+files="$(printf '%s\n' "$workflows" | awk '$1 == "F" { sub(/^. /, ""); print }')"
 sym=""
 if [ "$mode" = check ]; then
-    sym="$(printf '%s\n' "$tracked" | awk '$1 == "120000" { sub(/^[^ ]+ /, ""); printf "%s: symlink\n", $0 }')"
+    sym="$(printf '%s\n' "$workflows" | awk 'NF && $1 != "F" {
+        k = $1
+        sub(/^. /, "")
+        printf "%s: %s\n", $0, (k == "S" ? "symlink" : (k == "G" ? "not a regular file" : "unsafe file name"))
+    }')"
     [ -z "$sym" ] || printf '%s\n' "$sym"
 fi
 if [ -z "$files" ]; then
@@ -259,6 +259,10 @@ END {
     if (NR > 0) end_file()
     exit bad ? 1 : 0
 }
-' $files || rc=$?
+' $files 2>/dev/null || rc=$?
+if [ "$rc" -gt 1 ]; then
+    echo "check-workflow-permissions.sh: awk failed (status $rc) reading the files" >&2
+    exit 2
+fi
 [ "$rc" -ne 0 ] || [ -z "$sym" ] || rc=1
 exit "$rc"

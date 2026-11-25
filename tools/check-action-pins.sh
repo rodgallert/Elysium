@@ -35,7 +35,8 @@ if [ "${1:-}" = "--list" ] || [ "${1:-}" = "--files" ]; then
     mode="${1#--}"
     shift
 fi
-root="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
+here="$(cd "$(dirname "$0")" && pwd)"
+root="${1:-$(cd "$here/.." && pwd)}"
 if [ ! -d "$root" ]; then
     echo "check-action-pins.sh: $root is not a directory" >&2
     exit 2
@@ -46,19 +47,20 @@ if [ ! -e "$root/.git" ]; then
 fi
 cd "$root"
 
-# What git tracks, as "<mode> <path>" for the workflows and every action.yml / action.yaml; mode 120000 is a symlink
-if ! listing="$(git -c core.quotePath=false ls-files -s 2>/dev/null)"; then
+# The tracked files (tools/tracked-ci-files.sh): F to scan, S symlink, G not a regular file, U an unsafe name
+if ! records="$(sh "$here/tracked-ci-files.sh" "$root")"; then
     echo "check-action-pins.sh: git cannot list the files of $root" >&2
     exit 2
 fi
-selected="$(printf '%s\n' "$listing" | awk -F'\t' '
-    {
-        split($1, m, " ")
-        path = substr($0, index($0, "\t") + 1)
-        if (path ~ /^[.]github\/workflows\/[^\/]+[.]ya?ml$/ || path ~ /(^|\/)action[.]ya?ml$/) print m[1] " " path
-    }' | LC_ALL=C sort -k2)"
-files="$(printf '%s\n' "$selected" | awk '$1 != "120000" { sub(/^[^ ]+ /, ""); print }')"
-symlinks="$(printf '%s\n' "$selected" | awk '$1 == "120000" { sub(/^[^ ]+ /, ""); print }')"
+files="$(printf '%s\n' "$records" | awk '$1 == "F" { sub(/^. /, ""); print }')"
+extra=""
+if [ "$mode" = check ]; then
+    extra="$(printf '%s\n' "$records" | awk 'NF && $1 != "F" {
+        k = $1
+        sub(/^. /, "")
+        printf "%s:1: <%s>\n", $0, (k == "S" ? "symlink" : (k == "G" ? "not a regular file" : "unsafe file name"))
+    }')"
+fi
 if [ "$mode" = files ]; then
     [ -z "$files" ] || printf '%s\n' "$files"
     exit 0
@@ -68,10 +70,13 @@ fi
 IFS='
 '
 set -f
-out="$({
-    if [ -n "$files" ]; then
-        # shellcheck disable=SC2086
-        SCANNED="$files" awk -v mode="$mode" '
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+rc=0
+: >"$work/awk"
+if [ -n "$files" ]; then
+    # shellcheck disable=SC2086
+    SCANNED="$files" awk -v mode="$mode" '
 function offender(ref) {
     if (mode == "list") return
     printf "%s:%d: %s\n", FILENAME, FNR, ref
@@ -154,11 +159,16 @@ index(FILENAME, ".github/workflows/") == 1 && match(line, /^[[:space:]]*runs-on:
     if (code ~ uses_key) offender("<unrecognised: uses>")
     if (index(FILENAME, ".github/workflows/") == 1 && code ~ runs_key) offender("<unrecognised: runs-on>")
 }
-END { exit bad ? 1 : 0 }' $files || true
-    fi
-    if [ "$mode" = check ] && [ -n "$symlinks" ]; then
-        for f in $symlinks; do printf '%s:1: <symlink>\n' "$f"; done
-    fi
+END { exit bad ? 1 : 0 }' $files >"$work/awk" 2>/dev/null || rc=$?
+fi
+# 1 only means "offenders found"; anything above is awk failing (an unreadable file), which must not look like a pass
+if [ "$rc" -gt 1 ]; then
+    echo "check-action-pins.sh: awk failed (status $rc) reading the files" >&2
+    exit 2
+fi
+out="$({
+    [ -z "$extra" ] || printf '%s\n' "$extra"
+    cat "$work/awk"
 } | LC_ALL=C sort -s -t: -k1,1)"
 [ -z "$out" ] || printf '%s\n' "$out"
 [ "$mode" = list ] || [ -z "$out" ] || exit 1
