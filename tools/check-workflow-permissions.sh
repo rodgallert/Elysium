@@ -21,6 +21,9 @@
 # Reads files only, plain POSIX sh (CI runs it under dash) and awk without GNU extensions. It understands the layout
 # the workflows use (block mappings, `permissions: {}` and one-line `{ key: value }` forms), not all of YAML.
 set -eu
+# Bytes, not characters: a name or a line that is not valid UTF-8 must be read, not skipped
+LC_ALL=C
+export LC_ALL
 
 mode=check
 if [ "${1:-}" = "--list" ]; then
@@ -40,7 +43,12 @@ if [ ! -e "$root/.git" ]; then
     exit 2
 fi
 # The workflows git tracks (tools/tracked-ci-files.sh); a symlink, a non-regular file or an unsafe name is an offender
-if ! records="$(sh "$here/tracked-ci-files.sh" "$root")"; then
+rc=0
+records="$(sh "$here/tracked-ci-files.sh" "$root" 2>/dev/null)" || rc=$?
+if [ "$rc" -eq 3 ]; then
+    echo "check-workflow-permissions.sh: a tracked file name contains byte 0x01 or 0x02" >&2
+    exit 2
+elif [ "$rc" -ne 0 ]; then
     echo "check-workflow-permissions.sh: git cannot list the files of $root" >&2
     exit 2
 fi
@@ -60,13 +68,14 @@ if [ -z "$files" ]; then
     exit 0
 fi
 
+operands="$(printf '%s\n' "$files" | sed 's|^|./|')"
 IFS='
 '
 set -f
 # shellcheck disable=SC2086
 rc=0
 # shellcheck disable=SC2086
-awk -v mode="$mode" '
+LC_ALL=C awk -v mode="$mode" '
 function trim(s) {
     sub(/^[[:space:]]+/, "", s)
     sub(/[[:space:]]+$/, "", s)
@@ -172,6 +181,7 @@ function end_file(    i, topproblem) {
 }
 function start_file() {
     cur_file = FILENAME
+    sub(/^[.]\//, "", cur_file)
     top_seen = 0
     top_val = ""
     in_jobs = 0
@@ -259,7 +269,7 @@ END {
     if (NR > 0) end_file()
     exit bad ? 1 : 0
 }
-' $files 2>/dev/null || rc=$?
+' $operands 2>/dev/null || rc=$?
 if [ "$rc" -gt 1 ]; then
     echo "check-workflow-permissions.sh: awk failed (status $rc) reading the files" >&2
     exit 2

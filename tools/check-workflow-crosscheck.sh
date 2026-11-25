@@ -40,7 +40,7 @@ IFS='
 '
 set -f
 for f in $files; do
-    if ! yaml_json "$f" >"$work/json" 2>"$work/err"; then
+    if ! yaml_json "./$f" >"$work/json" 2>"$work/err"; then
         echo "$f: yq cannot parse it"
         status=1
         continue

@@ -29,6 +29,9 @@
 # commit; the repository setting "Require actions to be pinned to a full-length commit SHA" refuses the latter at run time.
 # Plain POSIX sh (CI runs it under dash) and awk without GNU extensions.
 set -eu
+# Bytes, not characters: a name or a line that is not valid UTF-8 must be read, not skipped
+LC_ALL=C
+export LC_ALL
 
 mode=check
 if [ "${1:-}" = "--list" ] || [ "${1:-}" = "--files" ]; then
@@ -48,7 +51,12 @@ fi
 cd "$root"
 
 # The tracked files (tools/tracked-ci-files.sh): F to scan, S symlink, G not a regular file, U an unsafe name
-if ! records="$(sh "$here/tracked-ci-files.sh" "$root")"; then
+rc=0
+records="$(sh "$here/tracked-ci-files.sh" "$root" 2>/dev/null)" || rc=$?
+if [ "$rc" -eq 3 ]; then
+    echo "check-action-pins.sh: a tracked file name contains byte 0x01 or 0x02" >&2
+    exit 2
+elif [ "$rc" -ne 0 ]; then
     echo "check-action-pins.sh: git cannot list the files of $root" >&2
     exit 2
 fi
@@ -66,7 +74,9 @@ if [ "$mode" = files ]; then
     exit 0
 fi
 
-# Every file name is a plain path; word splitting on newlines only, no globbing
+# Every file name is a plain path (letters, digits and ._/- only) and is handed to awk as ./<path>, so a name can never be
+# read as an option or a variable assignment; word splitting on newlines only, no globbing
+operands="$(printf '%s\n' "$files" | sed 's|^|./|')"
 IFS='
 '
 set -f
@@ -76,10 +86,10 @@ rc=0
 : >"$work/awk"
 if [ -n "$files" ]; then
     # shellcheck disable=SC2086
-    SCANNED="$files" awk -v mode="$mode" '
+    LC_ALL=C SCANNED="$files" awk -v mode="$mode" '
 function offender(ref) {
     if (mode == "list") return
-    printf "%s:%d: %s\n", FILENAME, FNR, ref
+    printf "%s:%d: %s\n", cur, FNR, ref
     bad = 1
 }
 # <owner>/<repo>[/<path>]@<40 lowercase hex>, no spaces
@@ -123,6 +133,10 @@ BEGIN {
     uses_key = "(^|[^A-Za-z0-9_.-])[\"" q "]?uses[\"" q "]?[[:space:]]*:"
     runs_key = "(^|[^A-Za-z0-9_.-])[\"" q "]?runs-on[\"" q "]?[[:space:]]*:"
 }
+FNR == 1 {
+    cur = FILENAME
+    sub(/^[.]\//, "", cur)
+}
 {
     line = $0
     sub(/\r$/, "", line)
@@ -131,7 +145,7 @@ line ~ /^[[:space:]]*#/ { next }
 match(line, /^[[:space:]]*(-[[:space:]]+)?uses:/) {
     split_value(substr(line, RLENGTH + 1))
     if (mode == "list") {
-        if (val != "") printf "%s: uses %s\n", FILENAME, val
+        if (val != "") printf "%s: uses %s\n", cur, val
     } else if (val == "") {
         offender("<empty>")
     } else if (substr(val, 1, 2) == "./") {
@@ -142,10 +156,10 @@ match(line, /^[[:space:]]*(-[[:space:]]+)?uses:/) {
     }
     next
 }
-index(FILENAME, ".github/workflows/") == 1 && match(line, /^[[:space:]]*runs-on:/) {
+index(cur, ".github/workflows/") == 1 && match(line, /^[[:space:]]*runs-on:/) {
     split_value(substr(line, RLENGTH + 1))
     if (mode == "list") {
-        printf "%s: runs-on %s\n", FILENAME, (val == "" ? "<empty>" : val)
+        printf "%s: runs-on %s\n", cur, (val == "" ? "<empty>" : val)
     } else {
         if (val == "") val = "<empty>"
         if (val != "ubuntu-24.04") offender(val)
@@ -157,9 +171,9 @@ index(FILENAME, ".github/workflows/") == 1 && match(line, /^[[:space:]]*runs-on:
     code = line
     sub(/[[:space:]]+#.*$/, "", code)
     if (code ~ uses_key) offender("<unrecognised: uses>")
-    if (index(FILENAME, ".github/workflows/") == 1 && code ~ runs_key) offender("<unrecognised: runs-on>")
+    if (index(cur, ".github/workflows/") == 1 && code ~ runs_key) offender("<unrecognised: runs-on>")
 }
-END { exit bad ? 1 : 0 }' $files >"$work/awk" 2>/dev/null || rc=$?
+END { exit bad ? 1 : 0 }' $operands >"$work/awk" 2>/dev/null || rc=$?
 fi
 # 1 only means "offenders found"; anything above is awk failing (an unreadable file), which must not look like a pass
 if [ "$rc" -gt 1 ]; then
