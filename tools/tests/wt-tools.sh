@@ -331,6 +331,19 @@ test_ac1_5_concurrency() {
         check "#72-AC1.5 [new $i] the winner's checkout is complete" test -f "$wtd/feat-q/file.txt"
         check "#72-AC1.5 [new $i] no other directory is left" eq "$(ls -A "$wtd")" feat-q
     done
+    # the directory wt.sh makes to claim the path may be emptied again by git while it adds the worktree: still one winner
+    for i in 1 2 3; do
+        new_repo
+        g branch feat/e
+        (WT_GIT_FAIL=add-empties-dir runw "$work/c1" add feat/e) &
+        (sleep 0.25 && WT_GIT_FAIL=add-empties-dir runw "$work/c2" add feat/e) &
+        wait
+        both_runs
+        check "#72-AC1.5 [claim $i] git empties the claimed directory: one run adds it, the other finds it or is refused (0 0 or 0 1; $rc)" bash -c 'case "'"$rc"'" in "0 0" | "0 1" | "1 0") true ;; *) false ;; esac'
+        check "#72-AC1.5 [claim $i] exactly one worktree was created" eq "$(nwt)" 2
+        check "#72-AC1.5 [claim $i] its checkout is complete" test -f "$wtd/feat-e/file.txt"
+        check "#72-AC1.5 [claim $i] no other directory is left" eq "$(ls -A "$wtd")" feat-e
+    done
 }
 
 test_ac1_6_partial() {

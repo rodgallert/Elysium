@@ -2,6 +2,8 @@
 # Stub git for tools/tests/wt-tools.sh: records every call in $STUB_DIR/git.log and passes it on to the real git
 # ($REAL_GIT), except for the faults the test asks for in $WT_GIT_FAIL:
 #   add-partial          "worktree add" makes the target directory with a file in it and fails
+#   add-empties-dir      "worktree add" first removes the empty directory wt.sh made for it, waits a moment, then does the real add
+#                        (newer git versions may do this; it opens a window where a second run can claim the same path)
 #   remove-after-delete  "worktree remove" deletes the target directory (not the registration) and fails
 #   remove-keep-dir      "worktree remove" drops the registration (the admin directory) and fails, leaving the directory
 #   remove-then-fail     "worktree remove" really removes the worktree, then reports a failure (a concurrent run's removal)
@@ -46,6 +48,15 @@ case "${WT_GIT_FAIL:-}:$sub" in
                 mkdir -p "$p" && echo half >"$p/half-made"
                 echo "fatal: stub: worktree add failed" >&2
                 exit 128
+                ;;
+        esac
+        ;;
+    add-empties-dir:worktree)
+        case " $* " in
+            *" add "*)
+                p=$(after_dashes "$@")
+                rmdir "$p" 2>/dev/null
+                sleep 0.4
                 ;;
         esac
         ;;
