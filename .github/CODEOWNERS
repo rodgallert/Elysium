@@ -1,0 +1,6 @@
+# Ownership of the machinery that states and enforces the rules. Review by code owner is not required
+# (single maintainer, see Docs/workflow.md "Repository settings"); this file records who owns what.
+/.github/ @rodgallert
+/tools/ @rodgallert
+/docker-compose.prod.yml @rodgallert
+/Docs/workflow.md @rodgallert

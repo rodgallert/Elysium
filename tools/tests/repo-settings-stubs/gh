@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Test stub for tools/tests/repo-settings.sh: a fake of the few gh calls tools/check-repo-settings.sh makes, with its
+# answers in files under $STUB_DIR/api. Refuses to run outside the tests, never reaches GitHub.
+#   gh --version                      prints STUB_GH_VERSION (default 2.104.0)
+#   gh auth token --user <u>          prints a fake token when $STUB_DIR/loggedin exists, else fails
+#   gh auth switch ...                logged and refused
+#   gh api [-H header] [--paginate --slurp] <path>         $STUB_DIR/api/<key>: the body; <key>.status: an HTTP status to fail with
+#                                     (or "hang" to never answer); neither: 404. <key> is the path without
+#                                     repos/rodgallert/Elysium/, with / ? = turned into _
+# Every call is appended to $STUB_DIR/calls (arguments only, never the token).
+[ "${REPO_SETTINGS_TEST:-}" = 1 ] && [ -n "${STUB_DIR:-}" ] || { echo "tools/tests/repo-settings-stubs/gh is a test stub" >&2; exit 99; }
+echo "$*" >>"$STUB_DIR/calls"
+case "${1-}" in
+    --version)
+        echo "gh version ${STUB_GH_VERSION:-2.104.0} (2026-11-16)"
+        exit 0
+        ;;
+    auth)
+        if [ "${2-}" = token ] && [ -e "$STUB_DIR/loggedin" ]; then
+            echo gho_stubOwnerToken0001
+            exit 0
+        fi
+        echo "stub gh: no such login" >&2
+        exit 1
+        ;;
+    api) ;;
+    *)
+        echo "stub gh: unexpected command: $*" >&2
+        exit 99
+        ;;
+esac
+shift
+path=""
+paginate=no
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -H) shift ;;
+        --paginate|--slurp) paginate=yes ;;
+        -*) echo "stub gh: unexpected flag: $1" >&2; exit 99 ;;
+        *) path="$1" ;;
+    esac
+    shift
+done
+if [ "${GH_TOKEN-}" = bad ]; then
+    echo "gh: Bad credentials (HTTP 401)" >&2
+    exit 1
+fi
+key="${path#repos/rodgallert/Elysium}"
+key="${key#/}"
+key="${key//[\/?=]/_}"
+if [ -e "$STUB_DIR/api/$key.status" ]; then
+    status=$(cat "$STUB_DIR/api/$key.status")
+    if [ "$status" = hang ]; then
+        sleep 60
+        exit 0
+    fi
+    echo "gh: stubbed failure (HTTP $status)" >&2
+    exit 1
+fi
+if [ -e "$STUB_DIR/api/$key" ]; then
+    if [ "$paginate" = yes ]; then # like gh api --paginate --slurp: one array holding every page
+        if [ -e "$STUB_DIR/api/$key.page2" ]; then
+            jq -sc '.' "$STUB_DIR/api/$key" "$STUB_DIR/api/$key.page2"
+        else
+            jq -sc '.' "$STUB_DIR/api/$key"
+        fi
+        exit 0
+    fi
+    cat "$STUB_DIR/api/$key"
+    exit 0
+fi
+echo "gh: Not Found (HTTP 404)" >&2
+exit 1
