@@ -10,8 +10,8 @@
 # are none, 1 on offenders, 2 on a bad argument. With --list it prints each job's grants instead, one line per job,
 # "<file>: job <name>: <key:value ...>" sorted (or "none"), and exits 0: the PR description's table and the test that no
 # job gained a permission read it.
-# It fails closed: a top-level key that is not a plain `name:`, `jobs:` with a value after it, and a job id that is
-# quoted, has a value after its colon or is an inline `{ ... }` mapping are offenders ("not a plain key", "not a plain
+# It fails closed: a top-level key that is not a plain `name:`, `jobs:` with a value after it, and a job id that
+# has a value after its colon or is an inline `{ ... }` mapping are offenders ("not a plain key", "not a plain
 # job key"), so a job written in a form this check cannot read is never skipped. tools/check-workflow-crosscheck.sh
 # compares the listing with what yq finds.
 # Reads files only, plain POSIX sh (CI runs it under dash) and awk without GNU extensions. It understands the layout
@@ -190,8 +190,9 @@ indent == 0 {
     if (indent == job_indent) {
         finish_job()
         reset_job()
-        if (line ~ /^ *[A-Za-z_][A-Za-z0-9_-]*:[[:space:]]*(#.*)?$/) {
+        if (line ~ /^ *(["\047]?)[A-Za-z_][A-Za-z0-9_-]*(["\047]?):[[:space:]]*(#.*)?$/) {
             job = key_of(line)
+            gsub(/["\047]/, "", job)
         } else {
             jobs[++njobs] = "(line " FNR ")"
             problem[njobs] = "not a plain job key"

@@ -9,6 +9,7 @@
 #   - it fails on any form it does not read: a `uses` or `runs-on` key that is quoted, has a space before the colon or
 #     sits inside a `{ ... }` or `[ ... ]` (a flow mapping), is an offender "<unrecognised: uses>" or "<unrecognised:
 #     runs-on>", so quoting a key never hides a line.
+# A local reference (`uses: ./<path>`) needs an action.yml / action.yaml in that directory, or to be a workflow file.
 # The files are .github/workflows/*.yml and every action.yml / action.yaml in the repository (a local action can live
 # anywhere: `uses: ./tools/x`), except under node_modules, .git and .claude.
 # Usage: tools/check-action-pins.sh [--list] [repository root]   (default: the repository this script is in)
@@ -92,7 +93,10 @@ match(line, /^[[:space:]]*(-[[:space:]]+)?uses:/) {
     } else if (val == "") {
         offender("<empty>")
     } else if (substr(val, 1, 2) == "./") {
-        # a local action or workflow: nothing to pin (its own action.yml is scanned like the rest)
+        # a local action or workflow: nothing to pin, but it must exist (its action.yml is scanned like the rest).
+        # The path comes from a file, so only plain path characters ever reach the shell
+        if (val !~ "^[A-Za-z0-9_./-]+$") offender(val)
+        else if (system("[ -f \"" val "\" ] || [ -f \"" val "/action.yml\" ] || [ -f \"" val "/action.yaml\" ]") != 0) offender(val)
     } else if (!pinned(val) || cmt !~ /^#[[:space:]]*v[0-9]+[.][0-9]+[.][0-9]+([-+[:space:]].*)?$/) {
         offender(val)
     }
