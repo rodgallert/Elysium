@@ -421,6 +421,46 @@ local_case "a local action outside .github with action.yaml" 0 '' "./ci/release"
 local_case "a local reusable workflow that exists" 0 '' "./.github/workflows/other.yml" ".github/workflows/other.yml"
 local_case "a local path with no action.yml" 1 "$W:9: ./tools/nope" "./tools/nope" ""
 local_case "a local path with a shell character" 1 "$W:9: ./a;b" "./a;b" ""
+# file names git would quote (", \, a tab, a newline) are listed, scanned and refused (#83-AC1.2, #83-AC3.1)
+odd_bad=$'on: push\npermissions: write-all\njobs:\n  a:\n    runs-on: ubuntu-latest\n    permissions: write-all\n    steps:\n      - uses: evil/act@v1'
+odd_case() { # label, file name, expected printed name
+    local f=".github/workflows/$3"
+    newroot
+    printf '%s\n' "$odd_bad" >"$R/.github/workflows/$2"
+    case_run "#83-AC1.2" "a workflow named $1 is scanned and refused" "$pins" "$R" 1 "$f:1: <unsafe file name>
+$f:5: ubuntu-latest
+$f:8: evil/act@v1"
+    newroot
+    printf '%s\n' "$odd_bad" >"$R/.github/workflows/$2"
+    case_run "#83-AC3.1" "a workflow named $1 is scanned and refused (permissions)" "$perms" "$R" 1 "$f: unsafe file name
+$f: top level: permissions must be {} (found: write-all)
+$f: job a: permissions: write-all is not allowed"
+}
+odd_case "q\"x.yml" 'q"x.yml' 'q"x.yml'
+odd_case 'b\x.yml' 'b\x.yml' 'b\x.yml'
+odd_case "t<TAB>x.yml" $'t\tx.yml' $'t\tx.yml'
+newroot
+printf '%s\n' "$odd_bad" >"$R/.github/workflows/n"$'\n'"x.yml"
+case_run "#83-AC1.2" "a workflow with a newline in its name is refused" "$pins" "$R" 1 ".github/workflows/n?x.yml:1: <unsafe file name>"
+case_run "#83-AC3.1" "a workflow with a newline in its name is refused (permissions)" "$perms" "$R" 1 ".github/workflows/n?x.yml: unsafe file name"
+newroot
+printf 'name: o\n' >"$R/a.yml"
+printf '%s\n' "$HDR" "      - uses: actions/checkout@$s40 # v4.4.0" >"$R/.github/workflows/a.yml"
+printf '%s\n' "$HDR" "      - uses: actions/checkout@$s40 # v4.4.0" >"$R/.github/workflows/b.yml"
+git -C "$R" init -q
+git -C "$R" add -A
+rm "$R/.github/workflows/a.yml"
+NOGIT=1 case_run "#83-AC1.2" "an indexed file that cannot be read is an error, not a pass" "$pins" "$R" 2 "check-action-pins.sh: awk failed (status 2) reading the files"
+NOGIT=1 case_run "#83-AC3.2" "the permissions check says the same" "$perms" "$R" 2 "check-workflow-permissions.sh: awk failed (status 2) reading the files"
+newroot
+mkdir -p "$R/x"
+printf '%s\n%s\n' "$HDR" "      - uses: ./x" >"$R/$W"
+git -C "$R" init -q
+git -C "$R" add -A
+git -C "$R" update-index --add --cacheinfo "160000,$s40,x/action.yml"
+NOGIT=1 case_run "#83-AC1.2" "a gitlink named x/action.yml is not an action" "$pins" "$R" 1 "$W:9: ./x
+x/action.yml:1: <not a regular file>"
+
 # #83-AC1.2 boundaries
 newroot
 printf 'name: t\non: push\njobs:\n  j:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi\n' >"$R/$W"
@@ -532,6 +572,10 @@ perm_case "#83-AC3.1" "a quoted job name with its block is read as the job it na
 perm_case "#83-AC3.1" "a quoted job name without a block is named" 1 "$W: job build: no permissions block" $'on: push\npermissions: {}\njobs:\n  "build":\n    runs-on: ubuntu-24.04'
 perm_case "#83-AC3.1" "a top-level flow mapping" 1 "$W: top level: permissions must be {} (found: { contents: read })" $'on: push\npermissions: { contents: read }\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: {}'
 perm_case "#83-AC3.1" "a permissions flow mapping that does not close on its line" 1 "$W: job a: permissions flow mapping must close on its line" $'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    permissions: {\n      contents: write }'
+newroot
+printf '%s\n' "$GOOD" >"$R/real.txt"
+ln -s ../../real.txt "$R/.github/workflows/s.yml"
+case_run "#83-AC3.1" "a workflow that is a symlink is an offender" "$perms" "$R" 1 ".github/workflows/s.yml: symlink"
 perm_case "#83-AC3.2" "a single job with its block" 0 '' $'on: push\npermissions: {}\njobs:\n  only:\n    runs-on: ubuntu-24.04\n    permissions:\n      contents: read\n    steps:\n      - run: echo hi'
 perm_case "#83-AC3.2" "a single job without a block" 1 "$W: job only: no permissions block" $'on: push\npermissions: {}\njobs:\n  only:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo hi'
 newroot
@@ -698,6 +742,9 @@ if [ "$have_yq" = 1 ]; then
     case_run "#83-AC1.2" "cross-check: tracked actions under .claude/ and node_modules/ are read too" "$cross" "$R" 1 \
         "only in yq: .claude/evil/action.yml: uses actions/checkout@main
 only in yq: node_modules/pkg/action.yml: uses actions/checkout@v4"
+    newroot
+    printf '%s\n' "$odd_bad" >"$R/.github/workflows/q\"x.yml"
+    case_run "#83-AC1.2" "cross-check: a workflow whose name git quotes is read by both sides" "$cross" "$R" 0 ''
     case_run "#83-AC1.1" "cross-check: the repository agrees" "$cross" "$root" 0 ''
     case_run "#83-AC1.2" "cross-check: a root that is not a directory is a usage error" "$cross" "$work/pins/none" 2 \
         "check-workflow-crosscheck.sh: $work/pins/none is not a directory"
