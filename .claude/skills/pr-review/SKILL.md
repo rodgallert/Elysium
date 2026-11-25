@@ -44,13 +44,13 @@ Find the linked issue(s): the `Closes #n` lines in the body. Read each with `gh 
 
 ## 2. Check out, build and test
 
-Never switch branches in the main working copy: another session uses it. Use a scratch worktree under `.claude/worktrees/`, made with `tools/wt.sh` (the PR's own branch is usually checked out in its author's worktree, so the scratch one is a new branch of its own, detached at the reviewed commit):
+Never switch branches in the main working copy: another session uses it. Use a scratch worktree:
 
 ```
 REPO=$(git rev-parse --show-toplevel)    # run from inside the main working copy
+WT=${CLAUDE_JOB_DIR:-/tmp}/tmp/review-pr<n>
 git -C $REPO fetch -q origin
-WT=$($REPO/tools/wt.sh add --new review-pr<n>)
-git -C $WT checkout -q --detach <headRefOid>
+git -C $REPO worktree add --detach $WT <headRefOid>
 cd $WT
 tools/check-boundaries.sh
 ```
@@ -63,7 +63,7 @@ docker run --rm -v "$WT":/src -w /src mcr.microsoft.com/dotnet/sdk:10.0 dotnet t
 
 Tests that need Postgres, RabbitMQ or Redis start them themselves (containers); if they can't run here, say so under "Not checked". For each frontend the PR touches: `npm ci && npm run build`, plus `npm run lint` when the app has a lint script.
 
-A known warning that the service's `CLAUDE.md` already lists is not a finding; any other new warning is. Keep the worktree until the loosen-a-rule step in section 3 is done. When done: `cd $REPO && tools/wt.sh rm review-pr<n> --force && git branch -D review-pr<n>` (`--force` because the scratch worktree is detached and the loosened rule was discarded, never committed).
+A known warning that the service's `CLAUDE.md` already lists is not a finding; any other new warning is. Keep the worktree until the loosen-a-rule step in section 3 is done. When done: `git -C $REPO worktree remove --force $WT`.
 
 ## 3. Mechanical checks
 
