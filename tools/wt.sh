@@ -175,35 +175,59 @@ load_worktrees
 [ "${#WT_PATH[@]}" -ge 1 ] || refuse "$(show "$branch"): cannot list the repository's worktrees"
 
 # take_lock: one add or rm at a time per worktree name, so two runs never both pass the checks (and both report a removal, or
-# one clean up the other's checkout). The lock is a file in git's own directory holding the owner's pid, created by the shell
-# with noclobber (an exclusive create; mkdir is not exclusive under every coreutils, and a run that finds the lock free must
-# be the only one). A lock whose owner is gone is never taken over (two runs could both take it): it is refused by name,
-# and whoever runs this removes it
-lockfile="$common/wt-sh-$cmd.$name.lock"
+# one clean up the other's checkout). The lock is one file per name, shared by add and rm, in git's own directory, holding the
+# owner's pid; it is created by the shell with noclobber (an exclusive create; mkdir is not exclusive under every coreutils).
+# A lock whose owner is gone is never taken over (two runs could both take it): it is refused by name, and whoever runs this
+# removes it
+lockfile="$common/wt-sh.$name.lock"
 holding=0
 release_lock() {
     [ "$holding" -eq 1 ] && rm -f -- "$lockfile"
     return 0
 }
+try_create_lock() {
+    (
+        set -o noclobber
+        echo "$$" >"$lockfile"
+    ) 2>/dev/null
+}
 take_lock() {
-    local i owner
+    local i owner empty=0 shown_branch
+    shown_branch=$(show "$branch")
     for i in $(seq 1 100); do
-        if (
-            set -o noclobber
-            echo "$$" >"$lockfile"
-        ) 2>/dev/null; then
+        if try_create_lock; then
             holding=1
             return 0
         fi
-        owner=$(cat "$lockfile" 2>/dev/null || true)
-        # an owner that finished releases the lock before it exits, so only a lock that is still there, with the same owner, after
-        # the owner is seen to be gone was left behind
-        if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null && [ "$(cat "$lockfile" 2>/dev/null || true)" = "$owner" ]; then
-            refuse "$(show "$branch"): $lockfile was left by a run that is gone (or that you cannot signal); if no wt.sh run is active, remove it (rm $lockfile) and run again"
+        if [ ! -e "$lockfile" ] && [ ! -L "$lockfile" ]; then
+            # not created and not there: its owner may just have released it, so try once more before blaming the directory
+            if try_create_lock; then
+                holding=1
+                return 0
+            fi
+            if [ ! -e "$lockfile" ] && [ ! -L "$lockfile" ]; then
+                refuse "$shown_branch: cannot create the lock $lockfile ($common is not writable?); nothing was changed"
+            fi
+        fi
+        if ! owner=$(cat "$lockfile" 2>/dev/null); then
+            refuse "$shown_branch: the lock $lockfile cannot be read; if no wt.sh run is active, remove it (rm $lockfile) and run again"
+        fi
+        if [ -z "$owner" ]; then
+            # a run may be between creating the file and writing its pid: allow a moment
+            empty=$((empty + 1))
+            if [ "$empty" -ge 10 ]; then
+                refuse "$shown_branch: the lock $lockfile is empty (a run was killed while creating it); if no wt.sh run is active, remove it (rm $lockfile) and run again"
+            fi
+        elif ! kill -0 "$owner" 2>/dev/null && [ "$(cat "$lockfile" 2>/dev/null || true)" = "$owner" ]; then
+            # an owner that finished releases the lock before it exits, so only a lock still there with the same owner, seen after
+            # the owner is gone, was left behind
+            refuse "$shown_branch: $lockfile was left by a run that is gone (or that you cannot signal); if no wt.sh run is active, remove it (rm $lockfile) and run again"
+        else
+            empty=0
         fi
         sleep 0.1
     done
-    refuse "$(show "$branch"): another wt.sh run holds $lockfile"
+    refuse "$shown_branch: another wt.sh run holds $lockfile"
 }
 
 # ---- add -------------------------------------------------------------------------------------------------------------
