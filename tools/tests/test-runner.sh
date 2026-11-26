@@ -46,7 +46,8 @@ check() { # <name> <command...>: passes when the command succeeds
     else
         failed=$((failed + 1))
         echo "FAIL  $name"
-        printf '      rc=%s\n      out: %s\n' "${rc:-?}" "${out//$'\n'/ | }"
+        printf '      rc=%s\n      out (%s lines, the first 20):\n' "${rc:-?}" "$(wc -l <<<"$out")"
+        head -20 <<<"$out" | cut -c1-200 | sed 's/^/        | /'
     fi
 }
 rc=0
@@ -57,7 +58,7 @@ run() {
     local envs=()
     while [ $# -gt 0 ] && [ "$1" != -- ]; do envs+=("$1"); shift; done
     shift
-    out="$(env -u TEST_FILTER -u CI -u RUN_ALL_DIR -u RUN_ALL_TIMEOUT "${envs[@]}" "$@" 2>&1)"
+    out="$(env -u TEST_FILTER -u CI -u GITHUB_ACTIONS -u RUN_ALL_GRACE -u RUN_ALL_DIR -u RUN_ALL_TIMEOUT "${envs[@]}" "$@" 2>&1)"
     rc=$?
 }
 # run_suite <env assignment>... -- <suite file>: run only a suite that has the filter library; one that has not would run in
@@ -323,6 +324,12 @@ test_ac2_round2() {
     run RUN_ALL_DIR="$d" CI=true -- "$runner"
     check "#126-AC2.1 RUN_ALL_DIR is refused in CI (green with fewer suites)" exit_and_says 1 "RUN_ALL_DIR must not be set in CI"
     check "#126-AC2.1 and nothing ran" silent_on "pass suite"
+    run GITHUB_ACTIONS=true RUN_ALL_DIR="$d" -- "$runner"
+    check "#126-AC2.1 GITHUB_ACTIONS counts as CI: RUN_ALL_DIR is refused" exit_and_says 1 "RUN_ALL_DIR must not be set in CI"
+    run GITHUB_ACTIONS=true TEST_FILTER=alpha -- "$fx/cases.sh"
+    check "#126-AC1.9 GITHUB_ACTIONS counts as CI: a filter is refused" exit_and_says 1 "TEST_FILTER must not be set in CI"
+    run GITHUB_ACTIONS=true TEST_FILTER=alpha RUN_ALL_DIR="$d" -- "$runner"
+    check "#126-AC1.9 the runner refuses a filter under GITHUB_ACTIONS too" rc_is 1
     run CI=true -- "$runner" --no-such-flag
     check "#126-AC2.1 an unknown flag is a usage error" rc_is 2
     run RUN_ALL_DIR="$d" -- "$runner" pass pass
@@ -330,12 +337,18 @@ test_ac2_round2() {
     dir cleanup
     export RUN_ALL_MARKS="$work/marks-cleanup"
     start="$(date +%s)"
-    run RUN_ALL_DIR="$d" RUN_ALL_TIMEOUT=2 RUN_ALL_MARKS="$RUN_ALL_MARKS" -- "$runner"
-    check "#126-AC2.4 a timed out suite is failed" matches '^ *cleanup +FAILED \(timeout after 2s\)'
+    run RUN_ALL_DIR="$d" RUN_ALL_TIMEOUT=1 RUN_ALL_MARKS="$RUN_ALL_MARKS" -- "$runner"
+    check "#126-AC2.4 a timed out suite is failed" matches '^ *cleanup +FAILED \(timeout after 1s\)'
     check "#126-AC2.4 its cleanup trap ran to the end before the kill (TERM first, then a grace period)" grep -q cleanup-end "$RUN_ALL_MARKS.cleanup"
     check "#126-AC2.4 no child of the suite is left" not pgrep -f "[s]leep 62.33"
-    check "#126-AC2.4 the runner did not wait out the whole grace period" test $(($(date +%s) - start)) -lt 25
+    check "#126-AC2.4 the runner did not wait out the whole grace period" test $(($(date +%s) - start)) -lt 20
     check "#126-AC2.4 the grace period is 30 s by default" file_has "$runner" "RUN_ALL_GRACE:-30"
+    rm -f "$RUN_ALL_MARKS.cleanup"
+    run RUN_ALL_DIR="$d" RUN_ALL_TIMEOUT=1 RUN_ALL_GRACE=1 RUN_ALL_MARKS="$RUN_ALL_MARKS" -- "$runner"
+    check "#126-AC2.4 a grace period too short for the cleanup: the timeout is still reported" matches '^ *cleanup +FAILED \(timeout after 1s\)'
+    check "#126-AC2.4 the kill cut the cleanup short: the trap started" grep -q cleanup-start "$RUN_ALL_MARKS.cleanup"
+    check "#126-AC2.4 and never finished" not grep -q cleanup-end "$RUN_ALL_MARKS.cleanup"
+    check "#126-AC2.4 the kill left no child of the suite" not pgrep -f "[s]leep 62.33"
     dir big-a big-b
     run RUN_ALL_DIR="$d" -- "$runner"
     check "#126-AC2 output larger than a pipe buffer stays together: a" adjacent big-a-line
@@ -369,6 +382,7 @@ test_ac2_workflow() {
     check "#126-AC2 a Markdown-only change skips the edge suite: the gate passes --no-edge" txt_has "$gate" "no-edge"
     check "#126-AC2 and decides on the changes job's code output" txt_has "$gate" "needs.changes.outputs.code"
     check "#126-AC1.9 the gate job fails when TEST_FILTER is set" txt_has "$gate" "TEST_FILTER"
+    check "#126-AC2.1 and when RUN_ALL_DIR is set" txt_has "$gate" "RUN_ALL_DIR"
     check "#126-AC2 the gate job keeps its key" grep -qE '^  gate:$' "$wf"
     check "#126-AC2 permissions stay denied by default" grep -qE '^permissions: \{\}$' "$wf"
     check "#126-AC2 the pin, permission and cross checks pass" workflow_checks_pass
