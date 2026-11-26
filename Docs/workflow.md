@@ -52,6 +52,7 @@ The `publish` job in `.github/workflows/build.yml` publishes the development ver
 | Ticket: `<type>/p<n>-<slug>` for roadmap tasks (e.g. `feat/p2-password-sign-in`), `<type>/<slug>` for other work (e.g. `ci/publish-images`) | `main` | `main` | squash | merged |
 | Release: `release/<part>-<x.y>` | the part's release tag | itself (hotfix PRs merge into it) | squash | the minor version is no longer in production |
 
+- **Work happens in its own worktree under `.claude/worktrees/`**, never by switching branches in the main working copy: `tools/wt.sh add <branch>` creates it (`--new` makes a new branch from `origin/main`) and prints its path, `tools/wt.sh rm <branch>` removes it and refuses while it holds uncommitted files, commits that are in no remote-tracking ref, a detached HEAD, a lock or the caller's current directory (`--force` overrides all but the lock and the directory; `tools/tests/wt-tools.sh` tests it).
 - **Nobody commits directly to `main`.** It only receives squash merges of reviewed PRs. All commits happen on ticket and hotfix branches.
 - `main` is never the head (source) of a pull request.
 - Branches are deleted automatically when their PR merges (repo setting). A branch is never reused after it merges: start a new ticket instead.
@@ -286,7 +287,7 @@ Actions → Release → Run workflow, mode `dry-run`, any part and branch (a ser
 
 `main` and `release/**` require one status check, `gate` (the last job of `.github/workflows/build.yml`), so a PR with red CI can't be merged. It's one job with one name because no build job could be the required check: the `frontends (<path>)` jobs change name whenever an app is added, renamed or removed, and GitHub counts a skipped required check as passing, so a build job skipped on a Markdown-only change (or because a job it needs failed) would let the PR through. The gate runs on every change (`if: always()`), so a failed or cancelled job is reported as a failed gate rather than left pending.
 
-What `gate` checks (`tools/ci-gate.sh`; its fixture tests, `tools/tests/ci-tools.sh`, the Prince `.env` check's tests, `tools/tests/env-check.sh`, the ticket script's tests, `tools/tests/ticket-tools.sh`, and the PR script's tests, `tools/tests/pr-tools.sh`, run in the gate job first). The `changes` job (`tools/ci-code-changed.sh`) decides whether the change touches anything besides Markdown; there is no `paths-ignore` filter, because a filtered workflow never reports:
+What `gate` checks (`tools/ci-gate.sh`; its fixture tests, `tools/tests/ci-tools.sh`, the Prince `.env` check's tests, `tools/tests/env-check.sh`, the ticket script's tests, `tools/tests/ticket-tools.sh`, the PR script's tests, `tools/tests/pr-tools.sh`, and the worktree script's tests, `tools/tests/wt-tools.sh`, run in the gate job first). The `changes` job (`tools/ci-code-changed.sh`) decides whether the change touches anything besides Markdown; there is no `paths-ignore` filter, because a filtered workflow never reports:
 
 | Case | Gate result |
 |---|---|

@@ -319,6 +319,8 @@ jobs:
         run: tools/tests/ticket-tools.sh
       - name: PR script tests
         run: tools/tests/pr-tools.sh
+      - name: Worktree script tests
+        run: tools/tests/wt-tools.sh
       - name: Compose image-name check tests
         run: tools/tests/check-compose-images.sh
       # Real containers: the edge from Edge/ in front of two stub upstreams (about 3 minutes). Only when something besides

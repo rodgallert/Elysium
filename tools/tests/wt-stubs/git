@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Stub git for tools/tests/wt-tools.sh: records every call in $STUB_DIR/git.log and passes it on to the real git
+# ($REAL_GIT), except for the faults the test asks for in $WT_GIT_FAIL:
+#   add-partial          "worktree add" makes the target directory with a file in it and fails
+#   add-empties-dir      "worktree add" first removes the empty directory wt.sh made for it, waits a moment, then does the real add
+#                        (newer git versions may do this; it opens a window where a second run can claim the same path)
+#   remove-after-delete  "worktree remove" deletes the target directory (not the registration) and fails
+#   remove-keep-dir      "worktree remove" drops the registration (the admin directory) and fails, leaving the directory
+#   remove-then-fail     "worktree remove" really removes the worktree, then reports a failure (a concurrent run's removal)
+#   network              fetch, pull, push, ls-remote, clone and remote update fail
+set -u
+printf '%s\n' "$*" >>"$STUB_DIR/git.log"
+
+sub=""
+skip=0
+for a in "$@"; do
+    if [ "$skip" -eq 1 ]; then
+        skip=0
+        continue
+    fi
+    case "$a" in
+        -C | -c) skip=1 ;;
+        -*) ;;
+        *)
+            sub="$a"
+            break
+            ;;
+    esac
+done
+
+# the argument after the first "--" (the path wt.sh hands to git worktree add and remove)
+after_dashes() {
+    local seen=0 a
+    for a in "$@"; do
+        if [ "$seen" -eq 1 ]; then
+            printf '%s' "$a"
+            return
+        fi
+        [ "$a" = "--" ] && seen=1
+    done
+}
+
+case "${WT_GIT_FAIL:-}:$sub" in
+    add-partial:worktree)
+        case " $* " in
+            *" add "*)
+                p=$(after_dashes "$@")
+                mkdir -p "$p" && echo half >"$p/half-made"
+                echo "fatal: stub: worktree add failed" >&2
+                exit 128
+                ;;
+        esac
+        ;;
+    add-empties-dir:worktree)
+        case " $* " in
+            *" add "*)
+                p=$(after_dashes "$@")
+                rmdir "$p" 2>/dev/null
+                sleep 0.4
+                ;;
+        esac
+        ;;
+    remove-after-delete:worktree)
+        case " $* " in
+            *" remove "*)
+                p=$(after_dashes "$@")
+                rm -rf "$p"
+                echo "error: stub: failed to delete the worktree" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+    remove-keep-dir:worktree)
+        case " $* " in
+            *" remove "*)
+                p=$(after_dashes "$@")
+                admin=$(sed -n 's/^gitdir: //p' "$p/.git")
+                /bin/rm -rf "$admin"
+                echo "error: stub: failed to delete the worktree directory" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+    remove-then-fail:worktree)
+        case " $* " in
+            *" remove "*)
+                "$REAL_GIT" "$@"
+                echo "error: stub: failed after removing the worktree" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+    network:fetch | network:pull | network:push | network:ls-remote | network:clone)
+        echo "fatal: stub: network is down" >&2
+        exit 128
+        ;;
+    network:remote)
+        case " $* " in
+            *" update "*)
+                echo "fatal: stub: network is down" >&2
+                exit 128
+                ;;
+        esac
+        ;;
+esac
+exec "$REAL_GIT" "$@"
