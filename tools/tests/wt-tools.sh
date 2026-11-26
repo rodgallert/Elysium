@@ -347,7 +347,7 @@ test_ac1_5_concurrency() {
     # a lock left by an add that was killed: refused by name, nothing created
     new_repo
     g branch feat/sl
-    local dead lock="$repo/.git/wt-sh-add.feat-sl.lock"
+    local dead lock="$repo/.git/wt-sh.feat-sl.lock"
     true &
     dead=$!
     wait "$dead"
@@ -360,6 +360,65 @@ test_ac1_5_concurrency() {
     w add feat/sl
     check "#72-AC1.5 once the lock is removed, add works (exit 0)" rc_is 0
     check "#72-AC1.5 add leaves no lock behind" test ! -e "$lock"
+
+    # one lock per name, shared by add and rm: a run waits for the other kind's run, then goes on
+    local holder rel t_end
+    for holder in add rm; do
+        new_repo
+        if [ "$holder" = add ]; then g branch feat/sh; else plain_wt feat/sh; fi
+        rm -f "$work/released"
+        lock="$repo/.git/wt-sh.feat-sh.lock"
+        sleep 3 &
+        dead=$!
+        echo "$dead" >"$lock"
+        ( sleep 1; date +%s.%N >"$work/released"; rm -f "$lock" ) &
+        if [ "$holder" = add ]; then w rm feat/sh; else w add feat/sh; fi
+        t_end=$(date +%s.%N)
+        rel=$(cat "$work/released" 2>/dev/null || echo 9999999999)
+        wait
+        check "#72-AC1.5 a lock held for the same name blocks the other command until it is released ($holder held it): exit 0" rc_is 0
+        check "#72-AC1.5 a lock held for the same name blocks the other command until it is released ($holder held it): it finished after the release" bash -c '[ "$(echo "'"$t_end"' >= '"$rel"'" | bc)" = 1 ]'
+    done
+
+    if [ "$(id -u)" -ne 0 ]; then
+        new_repo
+        g branch feat/ro
+        chmod 555 "$repo/.git"
+        local t0 t1
+        t0=$(date +%s)
+        w add feat/ro
+        t1=$(date +%s)
+        chmod 755 "$repo/.git"
+        check "#72-AC1.5 an unwritable .git: add refuses (exit 1)" rc_is 1
+        check "#72-AC1.5 an unwritable .git: names the lock path" says "$repo/.git/wt-sh.feat-ro.lock"
+        check "#72-AC1.5 an unwritable .git: says it cannot create it, not that another run holds it" says "cannot create"
+        check "#72-AC1.5 an unwritable .git: not the other-run message" silent_on "another wt.sh run"
+        check "#72-AC1.5 an unwritable .git: no 10 s wait" bash -c '[ '"$((t1 - t0))"' -lt 5 ]'
+        check "#72-AC1.5 an unwritable .git: nothing is created" is_empty_or_absent "$wtd"
+    fi
+
+    # a lock file left empty (a run killed between creating it and writing its pid)
+    new_repo
+    g branch feat/em
+    lock="$repo/.git/wt-sh.feat-em.lock"
+    : >"$lock"
+    t0=$(date +%s)
+    w add feat/em
+    t1=$(date +%s)
+    check "#72-AC1.5 an empty lock file: add refuses (exit 1)" rc_is 1
+    check "#72-AC1.5 an empty lock file: names the lock path" says "$lock"
+    check "#72-AC1.5 an empty lock file: says it is empty" says "is empty"
+    check "#72-AC1.5 an empty lock file: refuses within a few seconds" bash -c '[ '"$((t1 - t0))"' -lt 5 ]'
+    check "#72-AC1.5 an empty lock file: nothing is created" is_empty_or_absent "$wtd"
+    if [ "$(id -u)" -ne 0 ]; then
+        echo 1 >"$lock"
+        chmod 000 "$lock"
+        w add feat/em
+        chmod 644 "$lock"
+        check "#72-AC1.5 an unreadable lock file: add refuses (exit 1)" rc_is 1
+        check "#72-AC1.5 an unreadable lock file: names the lock path and says unreadable" says "$lock cannot be read"
+    fi
+    rm -f "$lock"
 }
 
 test_ac1_6_partial() {
@@ -683,7 +742,7 @@ test_ac2_5_concurrency() {
     # a lock left by a run that was killed: never taken over (two runs could both take it); refused, naming the lock
     new_repo
     plain_wt feat/st
-    local dead lock="$repo/.git/wt-sh-rm.feat-st.lock"
+    local dead lock="$repo/.git/wt-sh.feat-st.lock"
     true &
     dead=$!
     wait "$dead"
@@ -744,6 +803,32 @@ test_ac2_6_partial() {
         check "#72-AC2.6 the retry deletes nothing" test -f "$wt/file.txt"
         w rm --force feat/k
         check "#72-AC2.6 the retry with --force refuses too (exit 1)" rc_is 1
+
+        # the half-done deletion never follows a link inside the worktree: a read-only directory outside stays as it was
+        local mode
+        for mode in rm force; do
+            new_repo
+            plain_wt feat/lk
+            echo "junk/" >"$wt/.gitignore"
+            "$real_git" -C "$wt" add .gitignore
+            "$real_git" -C "$wt" commit -qm ignore
+            wpush
+            mkdir -p "$wt/junk" "$work/out$n/sub"
+            echo precious >"$work/out$n/keep"
+            echo precious >"$work/out$n/sub/keep2"
+            ln -s "$work/out$n" "$wt/junk/lnk"
+            echo x >"$wt/junk/f"
+            chmod 555 "$work/out$n/sub" "$work/out$n"
+            chmod 555 "$wt/junk"
+            if [ "$mode" = rm ]; then w rm feat/lk; else w rm --force feat/lk; fi
+            chmod -R u+rwx "$wt/junk" 2>/dev/null
+            check "#72-AC3 half-done deletion ($mode): finished (exit 0)" rc_is 0
+            check "#72-AC3 half-done deletion ($mode): the worktree is gone" test ! -e "$wt"
+            check "#72-AC3 half-done deletion ($mode): the outside directory's mode is unchanged" eq "$(stat -c %a "$work/out$n")" 555
+            check "#72-AC3 half-done deletion ($mode): the outside subdirectory's mode is unchanged" eq "$(stat -c %a "$work/out$n/sub")" 555
+            check "#72-AC3 half-done deletion ($mode): the outside files stay" eq "$(cat "$work/out$n/keep" "$work/out$n/sub/keep2" | tr '\n' ' ')" "precious precious "
+            chmod -R u+rwx "$work/out$n"
+        done
     else
         echo "note: running as root, so the permission-based deletion failure case is skipped"
     fi
@@ -1030,7 +1115,7 @@ test_ac4_docs() {
 
 test_lint() {
     if command -v shellcheck >/dev/null; then
-        check "#72-AC4 shellcheck: script, test file and stubs" shellcheck -x "$script" "$tools/tests/wt-tools.sh" "$stubs/git" "$stubs/gh" "$stubs/realpath"
+        check "#72-AC4 shellcheck: script, test file and stubs" shellcheck -x "$script" "$tools/tests/wt-tools.sh" "$stubs/git" "$stubs/gh" "$stubs/realpath" "$stubs/rm"
     else
         echo "note: shellcheck is not installed here; run it on the script, test file and stubs (CI image has it)"
     fi
