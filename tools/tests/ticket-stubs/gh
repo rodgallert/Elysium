@@ -19,7 +19,7 @@
 # shellcheck disable=SC2016,SC2295 # jq programs and path patterns are literal on purpose
 set +x # a caller's xtrace must not print the token
 [ "${TICKET_TOOLS_TEST:-}" = 1 ] || { echo "tools/tests/ticket-stubs/gh is a test stub" >&2; exit 99; }
-[ -n "${STUB_DIR:-}" ] && [ -d "$STUB_DIR" ] || { echo "stub gh: STUB_DIR is not a directory" >&2; exit 99; }
+if ! { [ -n "${STUB_DIR:-}" ] && [ -d "$STUB_DIR" ]; }; then echo "stub gh: STUB_DIR is not a directory" >&2; exit 99; fi
 cd "$STUB_DIR" || exit 99
 set -o pipefail
 owner_token="gho_stubOwnerToken0001"

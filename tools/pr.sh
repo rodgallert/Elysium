@@ -304,8 +304,8 @@ case "$cmd" in
         vfile="" vsha=""
         while [ $# -gt 0 ]; do
             case "$1" in
-                --body-file) [ $# -ge 2 ] && [ -z "$vfile" ] || usage; vfile="$2" ;;
-                --sha) [ $# -ge 2 ] && [ -z "$vsha" ] || usage; vsha="$2" ;;
+                --body-file) if ! { [ $# -ge 2 ] && [ -z "$vfile" ]; }; then usage; fi; vfile="$2" ;;
+                --sha) if ! { [ $# -ge 2 ] && [ -z "$vsha" ]; }; then usage; fi; vsha="$2" ;;
                 *) usage ;;
             esac
             shift 2

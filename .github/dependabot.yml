@@ -1,0 +1,19 @@
+# Keeps the pinned actions of the workflows up to date (Docs/workflow.md, "Pinned actions, default permissions and
+# runners"). One pull request a week for all action updates; a new release waits 14 days before it is proposed (security
+# updates skip the wait). Never merged automatically. Other ecosystems (NuGet, npm, Docker, Compose) are added here by #34.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    # the workflows, and the composite actions under .github/actions (they hold pins the workflows share)
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 14
+    groups:
+      actions:
+        patterns:
+          - "*"

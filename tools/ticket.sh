@@ -166,7 +166,7 @@ read_edits() {
         pages=$((pages + 1))
         [ "$(jq -r '.data.repository.issue.userContentEdits.pageInfo.hasNextPage' <<<"$page")" = true ] || break
         cursor="$(jq -r '.data.repository.issue.userContentEdits.pageInfo.endCursor // empty' <<<"$page")"
-        [ -n "$cursor" ] && [ "$pages" -lt 50 ] || die "edit history unreadable (pages did not end)"
+        if ! { [ -n "$cursor" ] && [ "$pages" -lt 50 ]; }; then die "edit history unreadable (pages did not end)"; fi
     done
 }
 
@@ -379,12 +379,12 @@ cmd_file() {
             *) usage ;;
         esac
     done
-    [ -n "$title" ] && [ -n "$type" ] && [ -n "$bodyfile" ] || usage
+    if ! { [ -n "$title" ] && [ -n "$type" ] && [ -n "$bodyfile" ]; }; then usage; fi
     valid_number "$epic" || usage
     [ -z "$resume" ] || valid_number "$resume" || usage
     case "$title" in *$'\n'*) echo "ticket.sh: the title must be one line" >&2; exit 2 ;; esac
     [[ " $types " == *" $type "* ]] || die "unknown type '$type' (one of: $types)"
-    [ -f "$bodyfile" ] && [ -r "$bodyfile" ] || die "cannot read the body file $bodyfile"
+    if ! { [ -f "$bodyfile" ] && [ -r "$bodyfile" ]; }; then die "cannot read the body file $bodyfile"; fi
     local first
     first="$(head -1 "$bodyfile" | tr -d '\r')"
     [ "$first" = "Epic: #$epic" ] || die "the first line of the body must be 'Epic: #$epic'"

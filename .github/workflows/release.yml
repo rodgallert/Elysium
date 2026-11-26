@@ -35,7 +35,7 @@ permissions: {}
 
 jobs:
   plan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -96,7 +96,7 @@ jobs:
   dry-run-pr:
     needs: plan
     if: needs.plan.outputs.mode == 'dry-run-pr' && needs.plan.outputs.images != '[]'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -120,7 +120,7 @@ jobs:
   dry-run:
     needs: plan
     if: needs.plan.outputs.mode == 'dry-run'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -150,7 +150,7 @@ jobs:
       !cancelled() && !failure()
       && (needs.plan.outputs.mode == 'dry-run' || needs.plan.outputs.mode == 'dry-run-pr')
       && needs.plan.outputs.images != '[]'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -225,7 +225,7 @@ jobs:
   prepare:
     needs: plan
     if: needs.plan.outputs.mode == 'prepare'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -254,7 +254,7 @@ jobs:
   # commit pushed with the workflow token starts no workflow by itself
   prepare-pin:
     needs: [plan, prepare]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
@@ -303,7 +303,7 @@ jobs:
     concurrency:
       group: release-${{ github.sha }}
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
