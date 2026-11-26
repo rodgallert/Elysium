@@ -18,8 +18,8 @@ on:
         type: boolean
         default: false
 
-permissions:
-  contents: read
+# Nothing by default: every job below asks for the grants it uses (tools/check-workflow-permissions.sh).
+permissions: {}
 
 # A newer push to the same PR cancels the older run; runs on main and release branches always finish.
 # On main this also keeps publishes in merge order: one run at a time, and a newer merge replaces a queued one,
@@ -32,8 +32,10 @@ jobs:
   # Does the change touch anything besides Markdown? A pull request is judged against its base, a push against the
   # commit before it (a new branch or an unknown commit counts as code), a manual run always builds.
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
     outputs:
       code: ${{ steps.changes.outputs.code }}
     steps:
@@ -58,24 +60,51 @@ jobs:
   boundaries:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Check the service boundaries
         run: tools/check-boundaries.sh
+
+  # The pin and permission rules for workflows and actions (Docs/workflow.md, "Pinned actions, default permissions and
+  # runners"): every action by full commit SHA with a version comment, every runner ubuntu-24.04, permissions: {} at the
+  # top and a permissions block on every job. Reads the checkout, no network, no token beyond contents: read.
+  action-pins:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Actions pinned to a commit SHA, runners ubuntu-24.04
+        run: tools/check-action-pins.sh
+      - name: No permissions by default, a block on every job
+        run: tools/check-workflow-permissions.sh
+      # yq (the runner image has it) lists every uses, runs-on and job with its permissions; the two checks above must
+      # have read exactly the same, so a form they cannot read cannot hide a line
+      - name: yq reads the same jobs, permissions, actions and runners
+        run: tools/check-workflow-crosscheck.sh
 
   dotnet:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: 10.0.x
       # Every solution builds on its own, since services don't share a solution
@@ -95,7 +124,7 @@ jobs:
   release-checks:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # attestations: read lets tools/release-state.sh verify a released version's attestations
     permissions:
@@ -143,20 +172,24 @@ jobs:
   find-frontends:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
     outputs:
       apps: ${{ steps.find.outputs.apps }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: find
         run: echo "apps=$(find . -path '*/Frontend/*/package.json' -not -path '*/node_modules/*' -printf '%h\n' | sed 's|^\./||' | sort | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
 
   frontends:
     needs: find-frontends
     if: needs.find-frontends.result == 'success' && needs.find-frontends.outputs.apps != '[]'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -166,8 +199,8 @@ jobs:
         shell: bash
         working-directory: ${{ matrix.app }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -183,8 +216,10 @@ jobs:
   find-images:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
     outputs:
       images: ${{ steps.find.outputs.images }}
     steps:
@@ -205,7 +240,7 @@ jobs:
       && needs.changes.outputs.code == 'true'
       && github.event_name == 'push' && github.ref == 'refs/heads/main'
       && needs.find-images.outputs.images != '[]'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -263,9 +298,9 @@ jobs:
   # PR changes the release tooling. A gate can't `needs` a job of another workflow, hence the wait. Both
   # workflows start on the same event, and the gate looks the run up only after its own needs finished.
   gate:
-    needs: [changes, boundaries, dotnet, release-checks, find-frontends, frontends, find-images, publish]
+    needs: [changes, boundaries, dotnet, release-checks, action-pins, find-frontends, frontends, find-images, publish]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read

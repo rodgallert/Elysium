@@ -1,0 +1,4 @@
+# Style-only finding that shellcheck on ubuntu-24.04 (0.9) reports in test scripts that newer releases do not:
+# "cat file | cmd" (SC2002). SC2015 stays on: "A && B || C" runs C when B fails, so guards are written as
+# if ! { A && B; }; then ...; fi.
+disable=SC2002

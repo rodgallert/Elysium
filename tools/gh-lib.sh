@@ -50,8 +50,9 @@ gh_init() {
         gh_call "check the token's account" gh api user -q .login || die "$GH_MSG"
         [ "$GH_OUT" = "$GH_LIB_OWNER" ] || die "GH_TOKEN is not the $GH_LIB_OWNER account's: unset it to use the $GH_LIB_OWNER login"
     else
-        GH_TOKEN=$(gh auth token --user "$GH_LIB_OWNER" --hostname github.com 2>/dev/null) && [ -n "$GH_TOKEN" ] ||
+        if ! { GH_TOKEN=$(gh auth token --user "$GH_LIB_OWNER" --hostname github.com 2>/dev/null) && [ -n "$GH_TOKEN" ]; }; then
             die "gh has no login for $GH_LIB_OWNER: gh auth login --skip-ssh-key -s project"
+        fi
         export GH_TOKEN
     fi
 }

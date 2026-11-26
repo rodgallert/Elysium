@@ -27,7 +27,7 @@ expect() { # job, expected result
 }
 
 # A job added to the workflow but not to this list (or to gate.needs) would go unchecked: refuse unknown jobs
-known="changes boundaries dotnet release-checks find-frontends frontends find-images publish"
+known="changes boundaries dotnet release-checks action-pins find-frontends frontends find-images publish"
 for job in $(jq -r 'keys[]' <<<"$NEEDS"); do
     case " $known " in
         *" $job "*) ;;
@@ -43,11 +43,11 @@ case "$code" in
 esac
 
 if [ "$code" = false ]; then
-    for job in boundaries dotnet release-checks find-frontends frontends find-images publish; do
+    for job in boundaries dotnet release-checks action-pins find-frontends frontends find-images publish; do
         expect "$job" skipped
     done
 else
-    for job in boundaries dotnet release-checks find-frontends find-images; do
+    for job in boundaries dotnet release-checks action-pins find-frontends find-images; do
         expect "$job" success
     done
 
