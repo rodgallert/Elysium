@@ -27,7 +27,7 @@
 #                               contain, before any container starts
 #   filter_report <pass> <failed>  prints the summary line; returns 1 when a filter is set and nothing ran
 
-if [ -n "${TEST_FILTER:-}" ] && [ -n "${CI:-}" ]; then
+if [ -n "${TEST_FILTER:-}" ] && [ -n "${CI:-}${GITHUB_ACTIONS:-}" ]; then
     echo "TEST_FILTER must not be set in CI: a filtered run is not a verdict on the suite" >&2
     exit 1
 fi

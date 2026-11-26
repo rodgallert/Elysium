@@ -10,7 +10,7 @@
 #
 # Environment:
 #   TEST_FILTER         passed on to the suites (tools/tests/lib/filter.sh); a suite where it matches no case is reported
-#                       as `no match` and is no failure, unless it matches in no suite at all (exit 1). Refused when CI is set.
+#                       as `no match` and is no failure, unless it matches in no suite at all (exit 1). Refused when CI or GITHUB_ACTIONS is set.
 #   RUN_ALL_TIMEOUT     seconds a suite may run before it is stopped and counted as failed (default 600)
 #   RUN_ALL_GRACE       seconds a stopped suite gets to run its cleanup (TERM first) before it is killed (default 30)
 #   RUN_ALL_DIR         a directory of suites to run instead of this one (the fixtures of tools/tests/test-runner.sh): every
@@ -45,7 +45,7 @@ grace_s="${RUN_ALL_GRACE:-30}"
 case "$grace_s" in
     '' | *[!0-9]* | 0) echo "run-all: RUN_ALL_GRACE must be a number of seconds (got '$grace_s')" >&2; exit 2 ;;
 esac
-if [ -n "${RUN_ALL_DIR:-}" ] && [ -n "${CI:-}" ]; then
+if [ -n "${RUN_ALL_DIR:-}" ] && [ -n "${CI:-}${GITHUB_ACTIONS:-}" ]; then
     echo "run-all: RUN_ALL_DIR must not be set in CI: it swaps the real suites for others" >&2
     exit 1
 fi
