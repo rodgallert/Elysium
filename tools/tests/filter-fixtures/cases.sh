@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A small suite on the shared filter library (#126): four cases, one of them failing on purpose.
+# A small suite on the shared filter library (#126): six cases, one of them failing on purpose.
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../lib/filter.sh
@@ -16,6 +16,8 @@ check() { # name, command...
 check "#900-AC1 alpha one" true
 check "#900-AC1.1 alpha two" true
 check "#900-AC2 beta [x] (literal) * ?" true
+check "#900-AC10 delta" true
+check "#900-AC1.10 epsilon" true
 check "#900-AC3 gamma fails" false
 echo "$pass passed, $failed failed"
 filter_report "$pass" "$failed" || exit 1

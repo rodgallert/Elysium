@@ -72,6 +72,7 @@ run_suite() {
     fi
 }
 rc_is() { [ "$rc" -eq "$1" ]; }
+file_has_f_line() { grep -qxF -- "$2" "$1"; } # <file> <whole line>
 exit_and_says() { [ "$rc" -eq "$1" ] && grep -qF -- "$2" <<<"$out"; } # <exit code> <text>
 txt_has() { grep -qE -- "$2" <<<"$1"; } # <text> <pattern>
 txt_hasnt() { ! grep -qE -- "$2" <<<"$1"; }
@@ -107,33 +108,40 @@ line_no() { grep -nF -- "$1" <<<"$out" | head -1 | cut -d: -f1; }
 
 test_ac1_fixture() {
     run -- "$fx/cases.sh"
-    check "#126-AC1 no filter: every case runs, the failing one fails the suite" exit_and_says 1 "3 passed, 1 failed"
+    check "#126-AC1 no filter: every case runs, the failing one fails the suite" exit_and_says 1 "5 passed, 1 failed"
     check "#126-AC1 no filter: no filter line is printed (behaviour unchanged)" silent_on "filter '"
     run TEST_FILTER= -- "$fx/cases.sh"
-    check "#126-AC1.1 an empty value is the same as unset: all four cases run" says "3 passed, 1 failed"
+    check "#126-AC1.1 an empty value is the same as unset: all six cases run" says "5 passed, 1 failed"
     check "#126-AC1.1 an empty value prints no filter line" silent_on "filter '"
     run TEST_FILTER='#900-AC1.1' -- "$fx/cases.sh"
     check "#126-AC1.1 a spec id runs only the case with that id: exit 0" rc_is 0
     check "#126-AC1.1 a spec id: one ran" says "1 passed, 0 failed"
-    check "#126-AC1.10 the summary line names the filter and counts ran and filtered out" says "filter '#900-AC1.1': 1 ran, 3 filtered out"
+    check "#126-AC1.10 the summary line names the filter and counts ran and filtered out" says "filter '#900-AC1.1': 1 ran, 5 filtered out"
     run TEST_FILTER='#900-AC1' -- "$fx/cases.sh"
-    check "#126-AC1.1 an id also selects the cases below it (#900-AC1 and #900-AC1.1)" says "filter '#900-AC1': 2 ran, 2 filtered out"
+    check "#126-AC1.1 an id also selects the cases below it (#900-AC1, #900-AC1.1 and #900-AC1.10, not #900-AC10)" says "filter '#900-AC1': 3 ran, 3 filtered out"
+    run TEST_FILTER='#900-AC10' -- "$fx/cases.sh"
+    check "#126-AC1.1 an id does not run into more digits: #900-AC10 selects delta only, not #900-AC1" says "filter '#900-AC10': 1 ran, 5 filtered out"
+    run TEST_FILTER='#900-AC1.1' -- "$fx/cases.sh"
+    check "#126-AC1.1 #900-AC1.1 does not select #900-AC1.10" silent_on "FAIL"
+    check "#126-AC1.1 and ran one case, not two (#900-AC1.10 is not selected)" says "1 passed, 0 failed"
+    run TEST_FILTER='epsilon' -- "$fx/cases.sh"
+    check "#126-AC1.1 a plain word is a substring: epsilon selects #900-AC1.10" says "filter 'epsilon': 1 ran"
     run TEST_FILTER='gamma' -- "$fx/cases.sh"
-    check "#126-AC1.1 a plain word selects by name" says "filter 'gamma': 1 ran, 3 filtered out"
+    check "#126-AC1.1 a plain word selects by name" says "filter 'gamma': 1 ran, 5 filtered out"
     run TEST_FILTER='[x] (literal) * ?' -- "$fx/cases.sh"
-    check "#126-AC1.1 regex metacharacters are matched literally: the one case that has them runs" says "filter '[x] (literal) * ?': 1 ran, 3 filtered out"
+    check "#126-AC1.1 regex metacharacters are matched literally: the one case that has them runs" says "filter '[x] (literal) * ?': 1 ran, 5 filtered out"
     check "#126-AC1.1 metacharacters: exit 0" rc_is 0
     run TEST_FILTER='.*' -- "$fx/cases.sh"
     check "#126-AC1.1 .* is not a wildcard: it matches no name, so exit 1" rc_is 1
     run TEST_FILTER='alpha (one|two)' -- "$fx/cases.sh"
     check "#126-AC1.1 an alternation is not an alternation: exit 1" rc_is 1
     run TEST_FILTER='alpha' -- "$fx/cases.sh"
-    check "#126-AC1.2 matching several cases (all of the alpha ones)" says "filter 'alpha': 2 ran, 2 filtered out"
+    check "#126-AC1.2 matching several cases (all of the alpha ones)" says "filter 'alpha': 2 ran, 4 filtered out"
     run TEST_FILTER='#900' -- "$fx/cases.sh"
-    check "#126-AC1.2 matching all cases runs them all (filter line says 4 ran, 0 filtered out)" says "filter '#900': 4 ran, 0 filtered out"
+    check "#126-AC1.2 matching all cases runs them all (filter line says 6 ran, 0 filtered out)" says "filter '#900': 6 ran, 0 filtered out"
     run TEST_FILTER='zz-no-such-case' -- "$fx/cases.sh"
     check "#126-AC1.2 matching none: exit 1, so a mistyped filter never looks like a pass" rc_is 1
-    check "#126-AC1.2 matching none: the summary says 0 ran and the filter" says "filter 'zz-no-such-case': 0 ran, 4 filtered out"
+    check "#126-AC1.2 matching none: the summary says 0 ran and the filter" says "filter 'zz-no-such-case': 0 ran, 6 filtered out"
     check "#126-AC1.2 matching none: says why" says "no case matches"
     run TEST_FILTER='gamma fails' -- "$fx/cases.sh"
     check "#126-AC1.6 a filtered run with one failing case exits 1" rc_is 1
@@ -145,7 +153,7 @@ test_ac1_fixture() {
     check "#126-AC1.9 CI never sets a filter: with CI set, a filter is refused (exit 1)" rc_is 1
     check "#126-AC1.9 and the message says why" says "TEST_FILTER must not be set in CI"
     run CI=true -- "$fx/cases.sh"
-    check "#126-AC1.9 CI without a filter runs as before" says "3 passed, 1 failed"
+    check "#126-AC1.9 CI without a filter runs as before" says "5 passed, 1 failed"
 }
 
 # a literal that exactly one case of the suite names, the number of its ran case(s), per suite
@@ -181,6 +189,14 @@ test_ac1_every_suite() {
         check "#126-AC1.2 $s: and says 0 ran with the filter named" says "filter 'zz-no-such-case-zz': 0 ran"
         check "#126-AC1 $s: sources the shared filter library" grep -q 'lib/filter.sh' "$tests/$s.sh"
     done
+}
+
+test_ac1_groups_message() {
+    run_suite TEST_FILTER='zz-no-such-case-zz' -- "$tests/pr-tools.sh"
+    check "#126-AC1.2 groups skipped: exit 1" rc_is 1
+    check "#126-AC1.2 groups skipped: says no case matched in the groups read, not a flat no case matches" says "no case matched in the groups read"
+    run TEST_FILTER='zz-no-such-case-zz' -- "$fx/cases.sh"
+    check "#126-AC1.2 no group skipped: still no case matches" says "no case matches"
 }
 
 test_ac1_regex_in_a_real_suite() {
@@ -301,6 +317,39 @@ test_ac2_every_suite_is_classified() {
     done
 }
 
+test_ac2_round2() {
+    local start
+    check "#126-AC2 the default set is pinned: moving a suite out of parallel= fails here" file_has_f_line "$runner" "parallel=(check-compose-images ci-tools env-check file-storage-entrypoint pr-tools repo-settings test-runner ticket-tools wt-tools)"
+    check "#126-AC2.5 alone= is pinned" file_has_f_line "$runner" "alone=(edge)"
+    check "#126-AC2 manual= is pinned" file_has_f_line "$runner" "manual=(compose-smoke proxy-resolve release-tools)"
+    dir pass
+    run RUN_ALL_DIR="$d" CI=true -- "$runner"
+    check "#126-AC2.1 RUN_ALL_DIR is refused in CI (green with fewer suites)" exit_and_says 1 "RUN_ALL_DIR must not be set in CI"
+    check "#126-AC2.1 and nothing ran" silent_on "pass suite"
+    run CI=true -- "$runner" --no-such-flag
+    check "#126-AC2.1 an unknown flag is a usage error" rc_is 2
+    run RUN_ALL_DIR="$d" -- "$runner" pass pass
+    check "#126-AC2.1 naming a suite twice is refused (exit 2)" exit_and_says 2 "twice"
+    dir cleanup
+    export RUN_ALL_MARKS="$work/marks-cleanup"
+    start="$(date +%s)"
+    run RUN_ALL_DIR="$d" RUN_ALL_TIMEOUT=2 RUN_ALL_MARKS="$RUN_ALL_MARKS" -- "$runner"
+    check "#126-AC2.4 a timed out suite is failed" matches '^ *cleanup +FAILED \(timeout after 2s\)'
+    check "#126-AC2.4 its cleanup trap ran to the end before the kill (TERM first, then a grace period)" grep -q cleanup-end "$RUN_ALL_MARKS.cleanup"
+    check "#126-AC2.4 no child of the suite is left" not pgrep -f "[s]leep 62.33"
+    check "#126-AC2.4 the runner did not wait out the whole grace period" test $(($(date +%s) - start)) -lt 25
+    check "#126-AC2.4 the grace period is 30 s by default" file_has "$runner" "RUN_ALL_GRACE:-30"
+    dir big-a big-b
+    run RUN_ALL_DIR="$d" -- "$runner"
+    check "#126-AC2 output larger than a pipe buffer stays together: a" adjacent big-a-line
+    check "#126-AC2 and b (the print takes the lock)" adjacent big-b-line
+    check "#126-AC2 the print is under a lock (flock)" file_has "$runner" "flock"
+    dir pass vanish
+    run RUN_ALL_DIR="$d" -- "$runner"
+    check "#126-AC2.6 a suite that leaves no result is failed, not left out of the table" matches '^ *vanish +FAILED \(no result\)'
+    check "#126-AC2.6 and the run fails" rc_is 1
+}
+
 test_ac2_filter_through_runner() {
     dir matches nomatch
     run RUN_ALL_DIR="$d" TEST_FILTER=zz -- "$runner" matches
@@ -359,9 +408,9 @@ test_ac3_edge_suite() {
     check "#126-AC3.4 the header says about how long the suite takes now (no 30 s wait)" file_hasnt "$e" "one 30 s wait"
 }
 
-for fn in test_ac1_fixture test_ac1_every_suite test_ac1_regex_in_a_real_suite test_ac1_suites_are_covered test_ac2_results \
+for fn in test_ac1_fixture test_ac1_every_suite test_ac1_groups_message test_ac1_regex_in_a_real_suite test_ac1_suites_are_covered test_ac2_results \
     test_ac2_arguments test_ac2_parallel_and_grouping test_ac2_4_time test_ac2_5_edge_alone test_ac2_every_suite_is_classified \
-    test_ac2_filter_through_runner test_ac2_workflow test_ac3_static test_ac3_edge_suite; do
+    test_ac2_round2 test_ac2_filter_through_runner test_ac2_workflow test_ac3_static test_ac3_edge_suite; do
     echo "== $fn"
     filter_run "$fn"
 done
