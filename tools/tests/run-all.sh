@@ -11,9 +11,11 @@
 # Environment:
 #   TEST_FILTER         passed on to the suites (tools/tests/lib/filter.sh); a suite where it matches no case is reported
 #                       as `no match` and is no failure, unless it matches in no suite at all (exit 1). Refused when CI is set.
-#   RUN_ALL_TIMEOUT     seconds a suite may run before it is killed and counted as failed (default 600)
+#   RUN_ALL_TIMEOUT     seconds a suite may run before it is stopped and counted as failed (default 600)
+#   RUN_ALL_GRACE       seconds a stopped suite gets to run its cleanup (TERM first) before it is killed (default 30)
 #   RUN_ALL_DIR         a directory of suites to run instead of this one (the fixtures of tools/tests/test-runner.sh): every
-#                       *.sh in it is in the parallel set, except edge.sh, which runs alone
+#                       *.sh in it is in the parallel set, except edge.sh, which runs alone. Refused when CI is set (a run of
+#                       fewer suites must not look like a green gate).
 #
 # Exit: 0 when every suite passed (or had no case for the filter), 1 when one failed or was killed, 2 for a usage error.
 #
@@ -39,6 +41,14 @@ usage() { echo "usage: tools/tests/run-all.sh [--no-edge] [<suite>...]" >&2; exi
 case "$timeout_s" in
     '' | *[!0-9]* | 0) echo "run-all: RUN_ALL_TIMEOUT must be a number of seconds (got '$timeout_s')" >&2; exit 2 ;;
 esac
+grace_s="${RUN_ALL_GRACE:-30}"
+case "$grace_s" in
+    '' | *[!0-9]* | 0) echo "run-all: RUN_ALL_GRACE must be a number of seconds (got '$grace_s')" >&2; exit 2 ;;
+esac
+if [ -n "${RUN_ALL_DIR:-}" ] && [ -n "${CI:-}" ]; then
+    echo "run-all: RUN_ALL_DIR must not be set in CI: it swaps the real suites for others" >&2
+    exit 1
+fi
 
 no_edge=0
 requested=()
@@ -66,6 +76,12 @@ else
 fi
 if [ "${#requested[@]}" -gt 0 ]; then
     for n in "${requested[@]}"; do
+        seen=0
+        for k in "${requested[@]}"; do [ "$k" = "$n" ] && seen=$((seen + 1)); done
+        if [ "$seen" -gt 1 ]; then
+            echo "run-all: suite '$n' named twice" >&2
+            exit 2
+        fi
         case "$n" in
             *[!A-Za-z0-9_-]* | '') echo "run-all: unknown suite '$n'" >&2; exit 2 ;;
         esac
@@ -102,7 +118,7 @@ since() { awk -v a="$1" -v b="$(now)" 'BEGIN { printf "%.1f", b - a }'; }
 run_suite() {
     local n="$1" started rc result took log="$tmp/$1.log"
     started="$(now)"
-    timeout --kill-after=5 "$timeout_s" bash "$dir/$n.sh" >"$log" 2>&1 </dev/null
+    timeout --kill-after="$grace_s" "$timeout_s" bash "$dir/$n.sh" >"$log" 2>&1 </dev/null
     rc=$?
     took="$(since "$started")"
     if [ "$rc" -eq 0 ]; then
@@ -132,8 +148,11 @@ for n in "${solo[@]}"; do run_suite "$n"; done
 echo "===== summary ====="
 failed=() matched=0 total=0
 for n in "${par[@]}" "${solo[@]}"; do
-    [ -f "$tmp/$n.result" ] || continue
-    { read -r result; read -r took; } <"$tmp/$n.result"
+    if [ -f "$tmp/$n.result" ]; then
+        { read -r result; read -r took; } <"$tmp/$n.result"
+    else
+        result="FAILED (no result)" took=0.0
+    fi
     printf '  %-26s %-30s %6ss\n' "$n" "$result" "$took"
     total=$((total + 1))
     case "$result" in

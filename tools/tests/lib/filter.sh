@@ -90,7 +90,11 @@ filter_report() {
     line="filter '$TEST_FILTER': $ran ran, $filter_skipped filtered out"
     [ "$filter_groups" -eq 0 ] || line+=" ($filter_groups groups not run)"
     if [ "$ran" -eq 0 ]; then
-        echo "$line: no case matches"
+        if [ "$filter_groups" -eq 0 ]; then
+            echo "$line: no case matches"
+        else
+            echo "$line: no case matched in the groups read (a name that is built or extended at run time is seen only in a group that runs)"
+        fi
         return 1
     fi
     echo "$line"

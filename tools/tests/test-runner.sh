@@ -81,10 +81,7 @@ file_hasnt() { ! grep -qE -- "$2" "$1"; }
 file_has_f() { grep -qF -- "$2" "$1"; } # <file> <fixed text>
 same_as_first_run() { [ "$out" = "$(env -u CI TEST_FILTER="alpha one" "$fx/cases.sh" 2>&1)" ]; }
 adjacent() { # <line prefix>: the lines of $out that start with it follow each other with no other line between
-    local first n
-    n="$(grep -c "^$1" <<<"$out")"
-    first="$(grep -n "^$1" <<<"$out" | head -1 | cut -d: -f1)"
-    [ "$n" -gt 1 ] && [ "$(grep -n "^$1" <<<"$out" | cut -d: -f1 | tr '\n' ' ')" = "$(seq "$first" $((first + n - 1)) | tr '\n' ' ')" ]
+    awk -v p="$1" 'index($0, p) == 1 { if (!n) first = NR; last = NR; n++ } END { exit !(n > 1 && last - first + 1 == n) }' <<<"$out"
 }
 not_before() { [ -n "$1" ] && [ -n "$2" ] && [ "$1" -ge "$2" ]; } # <start> <latest end>
 workflow_checks_pass() { (cd "$root" && tools/check-action-pins.sh && tools/check-workflow-permissions.sh && tools/check-workflow-crosscheck.sh) >/dev/null 2>&1; }
