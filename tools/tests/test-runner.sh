@@ -80,7 +80,7 @@ txt_hasnt() { ! grep -qE -- "$2" <<<"$1"; }
 file_has() { grep -qE -- "$2" "$1"; } # <file> <pattern>
 file_hasnt() { ! grep -qE -- "$2" "$1"; }
 file_has_f() { grep -qF -- "$2" "$1"; } # <file> <fixed text>
-same_as_first_run() { [ "$out" = "$(env -u CI TEST_FILTER="alpha one" "$fx/cases.sh" 2>&1)" ]; }
+same_as_first_run() { [ "$out" = "$(env -u CI -u GITHUB_ACTIONS TEST_FILTER="alpha one" "$fx/cases.sh" 2>&1)" ]; }
 adjacent() { # <line prefix>: the lines of $out that start with it follow each other with no other line between
     awk -v p="$1" 'index($0, p) == 1 { if (!n) first = NR; last = NR; n++ } END { exit !(n > 1 && last - first + 1 == n) }' <<<"$out"
 }
