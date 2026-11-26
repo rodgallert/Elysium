@@ -12,6 +12,8 @@ script="$tools/pr.sh"
 stubs="$tools/tests/ticket-stubs"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+# shellcheck source=lib/filter.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/filter.sh"
 pass=0
 failed=0
 
@@ -122,6 +124,7 @@ body_file() { printf '%s\n' "${2-$'Looks right.\n\nDetails below.'}" >"$work/$1"
 check() { # <name> <command...>: passes when the command succeeds
     local name="$1"
     shift
+    filter_gate "$name" || return 0
     if "$@" >/dev/null 2>&1; then
         pass=$((pass + 1))
         [ -z "${VERBOSE:-}" ] || echo "ok    $name"
@@ -948,7 +951,7 @@ test_ac4_docs() {
     check "#71-AC4 pr-review calls tools/pr.sh status <pr>" grep -qF 'tools/pr.sh status <pr>' "$pr_review"
     check "#71-AC4 pr-review documents status --branch <name> (as in the usage line)" grep -qF 'tools/pr.sh status --branch <name>' "$pr_review"
     check "#71-AC4 ticket-flow step 4 no longer lists the raw checks as a manual sequence" bash -c '! grep -q "that the PR.s head on GitHub equals the branch tip, that CI ran on that commit" "'"$ticket_flow"'"'
-    check "#71-AC4 tools/tests/pr-tools.sh is listed in the gate job" grep -qF "tools/tests/pr-tools.sh" "$tools/../.github/workflows/build.yml"
+    check "#71-AC4 tools/tests/pr-tools.sh is in the set tools/tests/run-all.sh runs in the gate job" grep -qE "^parallel=\(([^)]* )?pr-tools[ )]" "$tools/tests/run-all.sh"
     check "#71-AC4 workflow.md's ready-to-merge definition names tools/pr.sh status" bash -c 'grep -F "Ready to merge" "'"$tools"'/../Docs/workflow.md" | grep -qF "tools/pr.sh status"'
     check "#71-AC4 tools/tests/pr-tools.sh is listed in workflow.md" grep -qF "tools/tests/pr-tools.sh" "$tools/../Docs/workflow.md"
 }
@@ -967,9 +970,10 @@ for fn in test_ac1_facts test_ac1_1_inputs test_ac1_2_boundaries test_ac1_3_stat
     test_ac3_attribution test_ac3_3_state test_ac3_5_concurrency test_ac3_6_partial test_ac3_6_last_attempt test_ac3_7_idempotence test_gh_err \
     test_ac3_9_docs_and_lint test_ac4_docs test_lint; do
     echo "== $fn"
-    "$fn"
+    filter_run "$fn"
 done
 
 echo
 echo "$pass passed, $failed failed"
+filter_report "$pass" "$failed" || exit 1
 [ "$failed" -eq 0 ]

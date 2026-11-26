@@ -31,9 +31,11 @@ esac
 if ! declare -F filter_gate >/dev/null; then
     # the library is not there yet: no filter, every case runs (and fails on its assertion)
     filter_gate() { :; }
+    filter_run() { "$1"; }
     filter_report() { :; }
 fi
 
+not() { ! "$@"; }
 check() { # <name> <command...>: passes when the command succeeds
     local name="$1"
     shift
@@ -70,6 +72,23 @@ run_suite() {
     fi
 }
 rc_is() { [ "$rc" -eq "$1" ]; }
+exit_and_says() { [ "$rc" -eq "$1" ] && grep -qF -- "$2" <<<"$out"; } # <exit code> <text>
+txt_has() { grep -qE -- "$2" <<<"$1"; } # <text> <pattern>
+txt_hasnt() { ! grep -qE -- "$2" <<<"$1"; }
+file_has() { grep -qE -- "$2" "$1"; } # <file> <pattern>
+file_hasnt() { ! grep -qE -- "$2" "$1"; }
+file_has_f() { grep -qF -- "$2" "$1"; } # <file> <fixed text>
+same_as_first_run() { [ "$out" = "$(env -u CI TEST_FILTER="alpha one" "$fx/cases.sh" 2>&1)" ]; }
+adjacent() { # <line prefix>: the lines of $out that start with it follow each other with no other line between
+    local first n
+    n="$(grep -c "^$1" <<<"$out")"
+    first="$(grep -n "^$1" <<<"$out" | head -1 | cut -d: -f1)"
+    [ "$n" -gt 1 ] && [ "$(grep -n "^$1" <<<"$out" | cut -d: -f1 | tr '\n' ' ')" = "$(seq "$first" $((first + n - 1)) | tr '\n' ' ')" ]
+}
+not_before() { [ -n "$1" ] && [ -n "$2" ] && [ "$1" -ge "$2" ]; } # <start> <latest end>
+workflow_checks_pass() { (cd "$root" && tools/check-action-pins.sh && tools/check-workflow-permissions.sh && tools/check-workflow-crosscheck.sh) >/dev/null 2>&1; }
+override_named_outside_tests() { git -C "$root" ls-files | grep -F timeouts-short | grep -qv '^tools/tests/'; }
+override_named_by_shipped_files() { grep -rIl "timeouts-short" "$root/Edge" "$root/Prince" "$root/docker-compose.prod.yml" 2>/dev/null | grep -q .; }
 says() { grep -qF -- "$1" <<<"$out"; }
 silent_on() { ! grep -qF -- "$1" <<<"$out"; }
 matches() { grep -qE -- "$1" <<<"$out"; }
@@ -88,7 +107,7 @@ line_no() { grep -nF -- "$1" <<<"$out" | head -1 | cut -d: -f1; }
 
 test_ac1_fixture() {
     run -- "$fx/cases.sh"
-    check "#126-AC1 no filter: every case runs, the failing one fails the suite" bash -c '[ '"$rc"' -eq 1 ] && grep -q "3 passed, 1 failed" <<<"$1"' _ "$out"
+    check "#126-AC1 no filter: every case runs, the failing one fails the suite" exit_and_says 1 "3 passed, 1 failed"
     check "#126-AC1 no filter: no filter line is printed (behaviour unchanged)" silent_on "filter '"
     run TEST_FILTER= -- "$fx/cases.sh"
     check "#126-AC1.1 an empty value is the same as unset: all four cases run" says "3 passed, 1 failed"
@@ -121,7 +140,7 @@ test_ac1_fixture() {
     check "#126-AC1.6 and names the failing case" says "FAIL  #900-AC3 gamma fails"
     run TEST_FILTER='alpha one' -- "$fx/cases.sh"
     check "#126-AC1.6 a filter that leaves the failing case out passes (exit 0)" rc_is 0
-    check "#126-AC1.7 the same filter gives the same cases twice" bash -c '[ "$1" = "$(TEST_FILTER="alpha one" "$2" 2>&1)" ]' _ "$out" "$fx/cases.sh"
+    check "#126-AC1.7 the same filter gives the same cases twice" same_as_first_run
     run CI=true TEST_FILTER='alpha' -- "$fx/cases.sh"
     check "#126-AC1.9 CI never sets a filter: with CI set, a filter is refused (exit 1)" rc_is 1
     check "#126-AC1.9 and the message says why" says "TEST_FILTER must not be set in CI"
@@ -203,7 +222,8 @@ test_ac2_results() {
     cp "$fx/suites/pass.sh" "$d/pass-two.sh"
     run RUN_ALL_DIR="$d" -- "$runner"
     check "#126-AC2.2 all suites passing: exit 0" rc_is 0
-    check "#126-AC2.2 every suite of the directory ran (no arguments)" bash -c 'grep -q "^ *pass  *ok" <<<"$1" && grep -q "^ *pass-two  *ok" <<<"$1"' _ "$out"
+    check "#126-AC2.2 every suite of the directory ran (no arguments): the first" txt_has "$out" "^ *pass +ok"
+    check "#126-AC2.2 every suite of the directory ran (no arguments): the second" txt_has "$out" "^ *pass-two +ok"
 }
 
 test_ac2_arguments() {
@@ -232,10 +252,8 @@ test_ac2_parallel_and_grouping() {
     check "#126-AC2 they run in parallel: the wall time is under 5 s, not 6 s" test $((end - start)) -lt 5
     dir lines-a lines-b
     run RUN_ALL_DIR="$d" -- "$runner"
-    check "#126-AC2 a suite's output stays together: all of a's lines are adjacent" bash -c '
-        n="$(grep -n "^a-line" <<<"$1" | cut -d: -f1 | tr "\n" " ")"; [ "$n" = "$(seq "$(echo $n | cut -d" " -f1)" "$(( $(echo $n | cut -d" " -f1) + 7 ))" | tr "\n" " ")" ]' _ "$out"
-    check "#126-AC2 and so are b's" bash -c '
-        n="$(grep -n "^b-line" <<<"$1" | cut -d: -f1 | tr "\n" " ")"; [ "$n" = "$(seq "$(echo $n | cut -d" " -f1)" "$(( $(echo $n | cut -d" " -f1) + 7 ))" | tr "\n" " ")" ]' _ "$out"
+    check "#126-AC2 a suite's output stays together: all of a's lines are adjacent" adjacent a-line
+    check "#126-AC2 and so are b's" adjacent b-line
 }
 
 test_ac2_4_time() {
@@ -247,7 +265,7 @@ test_ac2_4_time() {
     check "#126-AC2.4 a suite that hangs past the timeout makes the run fail" test "$rc" -ne 0
     check "#126-AC2.4 it is killed and reported as failed, with the timeout" matches '^ *hang +FAILED \(timeout after 2s\) +[0-9]+\.[0-9]s$'
     check "#126-AC2.4 the run does not wait for it: under 10 s" test $((end - start)) -lt 10
-    check "#126-AC2.4 the killed suite's process is gone" bash -c '! pgrep -f "sleep 61.77" >/dev/null'
+    check "#126-AC2.4 the killed suite's process is gone" bash -c '! pgrep -f "[s]leep 61.77" >/dev/null'
     check "#126-AC2.4 the other suite still reported ok" matches '^ *pass +ok '
     run RUN_ALL_DIR="$d" RUN_ALL_TIMEOUT=abc -- "$runner" pass
     check "#126-AC2.4 a timeout that is not a number is refused (exit 2)" rc_is 2
@@ -262,7 +280,7 @@ test_ac2_5_edge_alone() {
     check "#126-AC2.5 the edge suite runs with the others in the set: exit 0" rc_is 0
     ps="$(head -1 "$RUN_ALL_MARKS.edge" 2>/dev/null | cut -d' ' -f1)"
     maxend="$(cat "$RUN_ALL_MARKS".par-a "$RUN_ALL_MARKS".par-b 2>/dev/null | grep ' end' | cut -d' ' -f1 | sort -n | tail -1)"
-    check "#126-AC2.5 the edge suite starts only after every parallel suite has ended" bash -c '[ -n "$1" ] && [ -n "$2" ] && [ "$1" -ge "$2" ]' _ "$ps" "$maxend"
+    check "#126-AC2.5 the edge suite starts only after every parallel suite has ended" not_before "$ps" "$maxend"
     pe="$(grep ' end' "$RUN_ALL_MARKS.edge" 2>/dev/null | cut -d' ' -f1)"
     check "#126-AC2.5 and it ends (nothing runs next to it)" test -n "$pe"
     rm -f "$RUN_ALL_MARKS".*
@@ -271,7 +289,7 @@ test_ac2_5_edge_alone() {
     check "#126-AC2.5 --no-edge still runs the others" says "par-a done"
     run RUN_ALL_DIR="$d" RUN_ALL_MARKS="$RUN_ALL_MARKS" -- "$runner" edge par-a
     check "#126-AC2.5 named together, the edge suite still runs alone, after par-a" test -e "$RUN_ALL_MARKS.edge"
-    check "#126-AC2.5 the real suites: edge is the only one that runs alone" bash -c 'grep -qE "^alone=\(edge\)$" "$1"' _ "$runner"
+    check "#126-AC2.5 the real suites: edge is the only one that runs alone" file_has "$runner" "^alone=\\(edge\\)$"
 }
 
 test_ac2_every_suite_is_classified() {
@@ -279,7 +297,7 @@ test_ac2_every_suite_is_classified() {
     for f in "$tests"/*.sh; do
         base="$(basename "$f" .sh)"
         [ "$base" = run-all ] && continue
-        check "#126-AC2.1 $base is listed in run-all.sh (parallel, alone or manual)" grep -qE "^(parallel|alone|manual)=\(.*(^|[ (])$base([ )]|$)" "$runner"
+        check "#126-AC2.1 $base is listed in run-all.sh (parallel, alone or manual)" grep -qE "^(parallel|alone|manual)=\(([^)]* )?${base}[ )]" "$runner"
     done
 }
 
@@ -301,13 +319,14 @@ test_ac2_workflow() {
     local wf="$root/.github/workflows/build.yml" gate
     gate="$(awk '/^  gate:/{g=1;next} g&&/^  [a-z][a-z-]*:$/{exit} g' "$wf")"
     check "#126-AC2 the gate job runs tools/tests/run-all.sh" grep -q 'tools/tests/run-all.sh' <<<"$gate"
-    check "#126-AC2 the gate job no longer has a step per suite" bash -c '! grep -qE "run: tools/tests/(ci-tools|env-check|file-storage-entrypoint|ticket-tools|pr-tools|wt-tools|check-compose-images|edge)\.sh" <<<"$1"' _ "$gate"
-    check "#126-AC2 a Markdown-only change skips the edge suite (--no-edge when changes.code is not true)" bash -c 'grep -q "no-edge" <<<"$1" && grep -q "needs.changes.outputs.code" <<<"$1"' _ "$gate"
-    check "#126-AC1.9 the gate job fails when TEST_FILTER is set" bash -c 'grep -q "TEST_FILTER" <<<"$1"' _ "$gate"
+    check "#126-AC2 the gate job no longer has a step per suite" txt_hasnt "$gate" "run: tools/tests/(ci-tools|env-check|file-storage-entrypoint|ticket-tools|pr-tools|wt-tools|check-compose-images|edge)\\.sh"
+    check "#126-AC2 a Markdown-only change skips the edge suite: the gate passes --no-edge" txt_has "$gate" "no-edge"
+    check "#126-AC2 and decides on the changes job's code output" txt_has "$gate" "needs.changes.outputs.code"
+    check "#126-AC1.9 the gate job fails when TEST_FILTER is set" txt_has "$gate" "TEST_FILTER"
     check "#126-AC2 the gate job keeps its key" grep -qE '^  gate:$' "$wf"
     check "#126-AC2 permissions stay denied by default" grep -qE '^permissions: \{\}$' "$wf"
-    check "#126-AC2 the pin, permission and cross checks pass" bash -c 'cd "$1" && tools/check-action-pins.sh >/dev/null && tools/check-workflow-permissions.sh >/dev/null && tools/check-workflow-crosscheck.sh >/dev/null' _ "$root"
-    check "#126-AC2.9 run-all.sh works under bash 4 and later (no bash 5 only features)" bash -c '! grep -qE "EPOCHREALTIME|wait -p|\$\{[a-z_]+@[ULul]\}" "$1"' _ "$runner"
+    check "#126-AC2 the pin, permission and cross checks pass" workflow_checks_pass
+    check "#126-AC2.9 run-all.sh works under bash 4 and later (no bash 5 only features)" file_hasnt "$runner" "EPOCHREALTIME|wait -p|[$][{][a-z_]+@[ULul][}]"
 }
 
 # ---- #126-AC3: the edge timeouts --------------------------------------------------------------------------------------
@@ -318,33 +337,33 @@ test_ac3_static() {
     check "#126-AC3 the shipped timeouts live in one include, Edge/timeouts.conf" test -f "$inc"
     for d in "proxy_connect_timeout 3s" "proxy_read_timeout 30s" "proxy_send_timeout 30s" "client_header_timeout 10s" "client_body_timeout 10s"; do
         check "#126-AC3 the shipped include has the #75 value: $d" grep -qE "^ *$d;" "$inc"
-        check "#126-AC3 nginx.conf no longer sets it itself: $d" bash -c '! grep -qE "^ *$1;" "$2"' _ "$d" "$conf"
+        check "#126-AC3 nginx.conf no longer sets it itself: $d" file_hasnt "$conf" "^ *$d;"
     done
     check "#126-AC3 nginx.conf includes the timeouts file" grep -qE '^ *include /etc/nginx/edge-timeouts\.conf;' "$conf"
     check "#126-AC3 the edge's compose file mounts the include read-only" grep -qE 'timeouts\.conf:/etc/nginx/edge-timeouts\.conf:ro' "$root/Edge/docker-compose.yml"
     check "#126-AC3 the test override sets a 3 s read timeout" grep -qE '^ *proxy_read_timeout 3s;' "$ov"
     check "#126-AC3 the test override sets a 1 s connect timeout" grep -qE '^ *proxy_connect_timeout 1s;' "$ov"
-    check "#126-AC3.3 the shipped config never loads the test override (nothing under Edge/ or in Prince names it)" bash -c '! grep -rIl "timeouts-short" "$1/Edge" "$1/Prince" "$1/docker-compose.prod.yml" 2>/dev/null | grep .' _ "$root"
-    check "#126-AC3.3 the override lives under tools/tests only" bash -c 'git -C "$1" ls-files | grep -F timeouts-short | grep -qv "^tools/tests/"; [ $? -ne 0 ]' _ "$root"
+    check "#126-AC3.3 the shipped config never loads the test override (nothing under Edge/ or in Prince names it)" not override_named_by_shipped_files
+    check "#126-AC3.3 the override lives under tools/tests only" not override_named_outside_tests
 }
 
 test_ac3_edge_suite() {
     local e="$tests/edge.sh"
     check "#126-AC3 the edge suite mounts the test override over the include" grep -q 'timeouts-short.conf' "$e"
-    check "#126-AC3 the edge suite no longer waits for 30 s (no 28000 ms lower bound)" bash -c '! grep -q "28000" "$1"' _ "$e"
-    check "#126-AC3.2 the 504 is expected at 3 s plus or minus 1 s (2000 to 4000 ms)" grep -qE '\-ge 2000 \] && \[ "\$ms" -le 4000' "$e"
+    check "#126-AC3 the edge suite no longer waits for 30 s (no 28000 ms lower bound)" file_hasnt "$e" 28000
+    check "#126-AC3.2 the 504 is expected at 3 s plus or minus 1 s (2000 to 4000 ms)" file_has_f "$e" "-ge 2000 ] && [ \"\$ms\" -le 4000"
     check "#126-AC3 the 502 timing scales with the 1 s connect timeout (answers within 2 s)" grep -qE 'took" -le 2000' "$e"
     check "#126-AC3 a separate static case checks the shipped include still has the #75 values" grep -q '#126-AC3.*shipped include' "$e"
     check "#126-AC3 the static case reads Edge/timeouts.conf" grep -q 'timeouts.conf' "$e"
     check "#126-AC3.3 the static case checks the shipped files never load the override" grep -q '#126-AC3.3' "$e"
-    check "#126-AC3.4 the header says about how long the suite takes now (no 30 s wait)" bash -c '! grep -q "one 30 s wait" "$1"' _ "$e"
+    check "#126-AC3.4 the header says about how long the suite takes now (no 30 s wait)" file_hasnt "$e" "one 30 s wait"
 }
 
 for fn in test_ac1_fixture test_ac1_every_suite test_ac1_regex_in_a_real_suite test_ac1_suites_are_covered test_ac2_results \
     test_ac2_arguments test_ac2_parallel_and_grouping test_ac2_4_time test_ac2_5_edge_alone test_ac2_every_suite_is_classified \
     test_ac2_filter_through_runner test_ac2_workflow test_ac3_static test_ac3_edge_suite; do
     echo "== $fn"
-    "$fn"
+    filter_run "$fn"
 done
 
 echo

@@ -11,6 +11,8 @@ script="$tools/check-repo-settings.sh"
 stubs="$tools/tests/repo-settings-stubs"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+# shellcheck source=lib/filter.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/filter.sh"
 pass=0
 failed=0
 
@@ -78,8 +80,13 @@ run_check() {
 
 # ---- assertions ---------------------------------------------------------------------------------------------------
 
-ok() { pass=$((pass + 1)); [ -z "${VERBOSE:-}" ] || echo "ok: $1"; }
+ok() {
+    filter_gate "$1" || return 0
+    pass=$((pass + 1))
+    [ -z "${VERBOSE:-}" ] || echo "ok: $1"
+}
 bad() {
+    filter_selected "$1" || return 0
     failed=$((failed + 1))
     echo "FAIL: $1"
     printf '%s\n' "$out" | sed 's/^/    | /'
@@ -535,7 +542,8 @@ t_ac4_docs() { # the paragraph exists and states the values the script asserts (
     [ -f "$tools/../.github/CODEOWNERS" ] && ok "#82-AC3 .github/CODEOWNERS exists" || { out=""; bad "#82-AC3 .github/CODEOWNERS is missing"; }
 }
 
-for t in $(declare -F | awk '$3 ~ /^t_/ {print $3}'); do "$t"; done
+for t in $(declare -F | awk '$3 ~ /^t_/ {print $3}'); do filter_run "$t"; done
 
 echo "$pass passed, $failed failed"
+filter_report "$pass" "$failed" || exit 1
 [ "$failed" = 0 ]

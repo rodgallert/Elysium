@@ -309,25 +309,25 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - name: Gate fixture tests
-        run: tools/tests/ci-tools.sh
-      - name: Prince .env check tests
-        run: tools/tests/env-check.sh
-      - name: File storage redaction tests
-        run: tools/tests/file-storage-entrypoint.sh
-      - name: Ticket script tests
-        run: tools/tests/ticket-tools.sh
-      - name: PR script tests
-        run: tools/tests/pr-tools.sh
-      - name: Worktree script tests
-        run: tools/tests/wt-tools.sh
-      - name: Compose image-name check tests
-        run: tools/tests/check-compose-images.sh
-      # Real containers: the edge from Edge/ in front of two stub upstreams (about 3 minutes). Only when something besides
+      - name: No test filter is set
+        run: |
+          if [ -n "${TEST_FILTER:-}" ]; then
+            echo "TEST_FILTER is set in CI: a filtered run is not a verdict on the suites"
+            exit 1
+          fi
+      # The tool suites side by side (gate fixtures, Prince .env check, file storage redaction, ticket, PR and worktree scripts,
+      # Compose image names, repository settings, the runner's own tests), then the edge suite alone: real containers, the edge
+      # from Edge/ in front of two stub upstreams (about 1.5 minutes). The edge suite runs only when something besides
       # Markdown changed; the smoke against the real Prince stack (EDGE_SMOKE=1) runs at review, not here.
-      - name: Edge proxy tests
-        if: needs.changes.outputs.code == 'true'
-        run: tools/tests/edge.sh
+      - name: Tool tests
+        env:
+          CODE: ${{ needs.changes.outputs.code }}
+        run: |
+          if [ "$CODE" = true ]; then
+            tools/tests/run-all.sh
+          else
+            tools/tests/run-all.sh --no-edge
+          fi
       - name: Every job did what this change calls for
         env:
           NEEDS: ${{ toJSON(needs) }}

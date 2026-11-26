@@ -2,3 +2,7 @@
 # "cat file | cmd" (SC2002). SC2015 stays on: "A && B || C" runs C when B fails, so guards are written as
 # if ! { A && B; }; then ...; fi.
 disable=SC2002
+
+# A file named by a "shellcheck source=<path>" directive is looked up next to the script that sources it (the suites do
+# this for lib/filter.sh), not in the directory shellcheck was started from.
+source-path=SCRIPTDIR
