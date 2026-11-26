@@ -13,6 +13,8 @@ stubs="$tools/tests/wt-stubs"
 real_git="$(command -v git)"
 work="$(mktemp -d /tmp/wt.XXXXXX)"
 trap 'chmod -R u+rwx "$work" 2>/dev/null; rm -rf "$work"' EXIT
+# shellcheck source=lib/filter.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/filter.sh"
 pass=0
 failed=0
 
@@ -96,6 +98,7 @@ w() {
 check() { # <name> <command...>: passes when the command succeeds
     local name="$1"
     shift
+    filter_gate "$name" || return 0
     if "$@" >/dev/null 2>&1; then
         pass=$((pass + 1))
         [ -z "${VERBOSE:-}" ] || echo "ok    $name"
@@ -1110,7 +1113,7 @@ test_ac4_docs() {
     check "#72-AC4 workflow.md names tools/wt.sh add" grep -qF "tools/wt.sh add" "$wf"
     check "#72-AC4 workflow.md names tools/wt.sh rm" grep -qF "tools/wt.sh rm" "$wf"
     check "#72-AC4 workflow.md lists tools/tests/wt-tools.sh" grep -qF "tools/tests/wt-tools.sh" "$wf"
-    check "#72-AC4 tools/tests/wt-tools.sh is listed in the gate job" grep -qF "tools/tests/wt-tools.sh" "$tools/../.github/workflows/build.yml"
+    check "#72-AC4 tools/tests/wt-tools.sh is in the set tools/tests/run-all.sh runs in the gate job" grep -qE "^parallel=\(([^)]* )?wt-tools[ )]" "$tools/tests/run-all.sh"
 }
 
 test_lint() {
@@ -1129,9 +1132,10 @@ all_tests=(test_ac1_add test_ac1_1_inputs test_ac1_2_boundaries test_ac1_3_state
 [ "$#" -eq 0 ] || all_tests=("$@")
 for fn in "${all_tests[@]}"; do
     echo "== $fn"
-    "$fn"
+    filter_run "$fn"
 done
 
 echo
 echo "$pass passed, $failed failed"
+filter_report "$pass" "$failed" || exit 1
 [ "$failed" -eq 0 ]

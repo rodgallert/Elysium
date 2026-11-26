@@ -4,12 +4,15 @@
 set -uo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export FILE_STORAGE_ENTRYPOINT_SOURCE_ONLY=1
+# shellcheck source=lib/filter.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/filter.sh"
 pass=0
 failed=0
 
 # redacts <name> <password> <message> <expected>
 redacts() {
     local got
+    filter_gate "$1" || return 0
     # shellcheck source=/dev/null
     got="$(FILE_STORAGE_ROOT_PASSWORD="$2" bash -c 'source "$1"; redact "$2"' _ "$root/Prince/file-storage-entrypoint.sh" "$3")"
     if [ "$got" = "$4" ]; then pass=$((pass + 1)); else
@@ -29,4 +32,5 @@ redacts "twice in one message" 'Secret99!x' 'Secret99!x and Secret99!x' '*** and
 redacts "no password in the message" 'Secret99!x' 'connection refused' 'connection refused'
 
 echo "file-storage redaction tests: $pass passed, $failed failed"
+filter_report "$pass" "$failed" || exit 1
 [ "$failed" -eq 0 ]

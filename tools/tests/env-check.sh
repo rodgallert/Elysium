@@ -8,6 +8,8 @@ set -uo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 script="$root/Prince/env-check.sh"
+# shellcheck source=lib/filter.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/filter.sh"
 pass=0
 failed=0
 
@@ -46,6 +48,7 @@ run() { # variable=value overrides... ; sets $out and $rc; an override without a
 fails() {
     local name="$1" variable="$2"
     shift 2
+    filter_gate "$name" || return 0
     run "$@"
     local value="" item leaked=0
     for item in "$@"; do case "$item" in "$variable"=*) value="${item#*=}" ;; esac; done
@@ -64,6 +67,7 @@ fails() {
 passes() {
     local name="$1"
     shift
+    filter_gate "$name" || return 0
     run "$@"
     if [ "$rc" -eq 0 ] && grep -q '^env-check: OK' <<<"$out"; then
         pass=$((pass + 1))
@@ -84,6 +88,7 @@ passes "Silo password of exactly 8 characters" FILE_STORAGE_ROOT_PASSWORD=123456
 colon_rule() {
     local name="$1" variable="$2"
     shift 2
+    filter_gate "$name" || return 0
     run "$@"
     if [ "$rc" -eq 1 ] && grep -q "^env-check: $variable must not contain a colon" <<<"$out"; then pass=$((pass + 1)); else
         failed=$((failed + 1))
@@ -95,6 +100,7 @@ colon_rule() {
 no_colon_rule() {
     local name="$1"
     shift
+    filter_gate "$name" || return 0
     run "$@"
     if ! grep -q 'must not contain a colon' <<<"$out"; then pass=$((pass + 1)); else
         failed=$((failed + 1))
@@ -116,10 +122,12 @@ fails "#74-AC6.2 colon in the Silo user, same rule as the password" FILE_STORAGE
 no_colon_rule "#74-AC6.2 a one-character Silo password is not a colon problem" 'FILE_STORAGE_ROOT_PASSWORD=a'
 no_colon_rule "#74-AC6.2 a one-character Silo user is not a colon problem" 'FILE_STORAGE_ROOT_USER=a'
 # #74-AC6.7: two runs print the same; removing the colon makes the next run pass with no other change
-run 'FILE_STORAGE_ROOT_PASSWORD=pa:ss1234'
-first="$out"
-run 'FILE_STORAGE_ROOT_PASSWORD=pa:ss1234'
-if [ "$out" = "$first" ] && [ -n "$first" ]; then pass=$((pass + 1)); else failed=$((failed + 1)); echo "FAIL: #74-AC6.7 two runs on the same values print the same"; fi
+if filter_gate "#74-AC6.7 two runs on the same values print the same"; then
+    run 'FILE_STORAGE_ROOT_PASSWORD=pa:ss1234'
+    first="$out"
+    run 'FILE_STORAGE_ROOT_PASSWORD=pa:ss1234'
+    if [ "$out" = "$first" ] && [ -n "$first" ]; then pass=$((pass + 1)); else failed=$((failed + 1)); echo "FAIL: #74-AC6.7 two runs on the same values print the same"; fi
+fi
 passes "#74-AC6.7 the same values without the colon pass" 'FILE_STORAGE_ROOT_PASSWORD=pass12345'
 fails "Silo password of 7 characters" FILE_STORAGE_ROOT_PASSWORD FILE_STORAGE_ROOT_PASSWORD=1234567
 fails "empty Silo password" FILE_STORAGE_ROOT_PASSWORD FILE_STORAGE_ROOT_PASSWORD=
@@ -183,13 +191,15 @@ for variable in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB JOBS_ADMIN_EMAIL; do
 done
 
 # Every broken value is reported, one line each
-run FILE_STORAGE_ROOT_PASSWORD=short JOBS_ADMIN_PASSWORD=nosymbol1 FILE_STORAGE_ROOT_USER=ab
-if [ "$rc" -eq 1 ] && [ "$(grep -c '^env-check: ' <<<"$out")" -eq 3 ]; then
-    pass=$((pass + 1))
-else
-    failed=$((failed + 1))
-    echo "FAIL: three broken values give three lines (got exit $rc)"
-    printf '%s\n' "    ${out//$'\n'/$'\n    '}"
+if filter_gate "three broken values give three lines"; then
+    run FILE_STORAGE_ROOT_PASSWORD=short JOBS_ADMIN_PASSWORD=nosymbol1 FILE_STORAGE_ROOT_USER=ab
+    if [ "$rc" -eq 1 ] && [ "$(grep -c '^env-check: ' <<<"$out")" -eq 3 ]; then
+        pass=$((pass + 1))
+    else
+        failed=$((failed + 1))
+        echo "FAIL: three broken values give three lines (got exit $rc)"
+        printf '%s\n' "    ${out//$'\n'/$'\n    '}"
+    fi
 fi
 
 # A value never shows up in the output: not in the failing lines, not in the OK line, and neither does its length
@@ -200,6 +210,7 @@ secret_runs=(
     "FILE_STORAGE_BUCKET=BadBucketValue"
 )
 for item in "${secret_runs[@]}"; do
+    filter_gate "a broken value never appears in the output: ${item%%=*}" || continue
     run "$item" POSTGRES_PASSWORD=PostgresSecretZZ
     value="${item#*=}"
     if [ "$rc" -eq 1 ] && ! grep -qF -e "$value" -e "PostgresSecretZZ" <<<"$out"; then
@@ -210,19 +221,23 @@ for item in "${secret_runs[@]}"; do
         printf '%s\n' "    ${out//$'\n'/$'\n    '}"
     fi
 done
-run POSTGRES_PASSWORD=PostgresSecretZZ JOBS_ADMIN_PASSWORD=ValidSecret9!ZZ FILE_STORAGE_ROOT_PASSWORD=ValidSecret9!QQ
-if [ "$rc" -eq 0 ] && ! grep -qE 'PostgresSecretZZ|ValidSecret9' <<<"$out" && ! grep -q '[0-9]\+ char' <<<"$out"; then
-    pass=$((pass + 1))
-else
-    failed=$((failed + 1))
-    echo "FAIL: the OK output must not contain a value (exit $rc)"
-    printf '%s\n' "    ${out//$'\n'/$'\n    '}"
+if filter_gate "the OK output must not contain a value"; then
+    run POSTGRES_PASSWORD=PostgresSecretZZ JOBS_ADMIN_PASSWORD=ValidSecret9!ZZ FILE_STORAGE_ROOT_PASSWORD=ValidSecret9!QQ
+    if [ "$rc" -eq 0 ] && ! grep -qE 'PostgresSecretZZ|ValidSecret9' <<<"$out" && ! grep -q '[0-9]\+ char' <<<"$out"; then
+        pass=$((pass + 1))
+    else
+        failed=$((failed + 1))
+        echo "FAIL: the OK output must not contain a value (exit $rc)"
+        printf '%s\n' "    ${out//$'\n'/$'\n    '}"
+    fi
 fi
 
 # The compose file passes the script exactly the variables it checks, and gives it no network
 compose_vars="$(awk '/^  env-check:/{f=1;next} f&&/^  [a-z]/{f=0} f' "$root/Prince/docker-compose.yml" | sed -n 's/^      \([A-Z_]*\): \${.*/\1/p' | sort | tr '\n' ' ')"
 script_vars="$(printf '%s\n' "${valid[@]%%=*}" | sort | tr '\n' ' ')"
-if [ "$compose_vars" = "$script_vars" ]; then
+if ! filter_gate "the compose file passes env-check exactly the variables it checks"; then
+    :
+elif [ "$compose_vars" = "$script_vars" ]; then
     pass=$((pass + 1))
 else
     failed=$((failed + 1))
@@ -234,7 +249,9 @@ fi
 # The Postgres healthcheck reads the user and database from the container's environment, quoted, so a space or a
 # shell character in a value can't break or add to the command
 health="$(grep 'pg_isready' "$root/Prince/docker-compose.yml")"
-if [ "$(wc -l <<<"$health")" -eq 1 ] && grep -qF -- '-U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\"' <<<"$health"; then
+if ! filter_gate "the Postgres healthcheck must use the user and database from the container"; then
+    :
+elif [ "$(wc -l <<<"$health")" -eq 1 ] && grep -qF -- '-U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\"' <<<"$health"; then
     pass=$((pass + 1))
 else
     failed=$((failed + 1))
@@ -243,4 +260,5 @@ else
 fi
 
 echo "$pass passed, $failed failed"
+filter_report "$pass" "$failed" || exit 1
 [ "$failed" -eq 0 ]

@@ -8,10 +8,13 @@ set -uo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+# shellcheck source=lib/filter.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/filter.sh"
 pass=0
 failed=0
 
 check() { # name, expected exit code, actual exit code, output
+    filter_gate "$1" || return 0
     if [ "$2" = "$3" ]; then
         pass=$((pass + 1))
     else
@@ -179,6 +182,7 @@ cp "$root/tools/tests/ci-stubs/gh" "$work/bin/gh"
 release_run() { # name, expected exit code, response files as "n=json"
     local name="$1" want="$2" out rc pair
     shift 2
+    filter_gate "release run: $name" || return 0
     rm -rf "$STUB_DIR"
     mkdir -p "$STUB_DIR"
     for pair in "$@"; do printf '%s\n' "${pair#*=}" >"$STUB_DIR/response-${pair%%=*}"; done
@@ -236,6 +240,7 @@ newroot() { # sets R to a fresh fixture root with .github/workflows
 case_run() { # id, name, script, root, expected exit code, expected output (exactly), extra arguments
     local sh out rc id="$1" name="$2" script="$3" dir="$4" want="$5" wantout="$6"
     shift 6
+    filter_gate "$id $name" || return 0
     # the checks read the files git tracks: a fixture is its own repository (never the real one)
     case "$dir" in
         "$work"/*)
@@ -257,6 +262,7 @@ case_run() { # id, name, script, root, expected exit code, expected output (exac
     done
 }
 require() { # id, name, 0 when the condition holds
+    filter_gate "$1 $2" || return 0
     if [ "$3" = 0 ]; then pass=$((pass + 1)); else
         failed=$((failed + 1))
         echo "FAIL: $1 $2"
@@ -798,4 +804,5 @@ require "#83-AC5.9" "the cross-check's docker fallback pins yq by tag and digest
 grep -rn 'mikefarah/yq[ ]' "$cross" "$root/tools/tests/ci-tools.sh" | grep -v '^[^:]*:[0-9]*:[[:space:]]*#' >/dev/null
 require "#83-AC5.9" "every yq container image is pinned" "$([ $? -ne 0 ] && echo 0 || echo 1)"
 echo "ci tools: $pass passed, $failed failed"
+filter_report "$pass" "$failed" || exit 1
 [ "$failed" -eq 0 ]

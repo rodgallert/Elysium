@@ -20,6 +20,7 @@ services:
       - 127.0.0.1
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro,z
+      - ./timeouts.conf:/etc/nginx/edge-timeouts.conf:ro,z
     networks:
       - elysium-edge
     user: "101:101"

@@ -11,6 +11,9 @@
 # PROXY_TEST_ONLY=drift runs only the deploy drift check (#73-AC4.3), PROXY_TEST_ONLY=net only AC5 and AC6, PROXY_TEST_ONLY=routes only AC3.
 # Needs Docker with Compose. About 5 minutes (4m13s to 6m12s measured, the high end with cold frontend builds; PROXY_TEST_ONLY=drift or net alone 1 to 2 minutes). PROXY_TEST_PROJECT overrides the project name.
 set -uo pipefail
+# shellcheck source=lib/filter.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/filter.sh"
+filter_precheck "${BASH_SOURCE[0]}" # a filter no case names is refused here, before any container starts
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fixture="$root/tools/tests/proxy-resolve"
@@ -42,8 +45,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-ok() { pass=$((pass + 1)); }
+_ok() { pass=$((pass + 1)); } # a case that already passed the filter in its own helper
+ok() {
+    filter_site_gate || return 0
+    pass=$((pass + 1))
+}
 bad() { # id description detail
+    filter_selected "$1 $2" || return 0 # an assertion that is not a counted pass: filtered out silently
     failed=$((failed + 1))
     echo "FAIL: $1 $2"
     [ -n "${3:-}" ] && printf '%s\n' "    ${3//$'\n'/$'\n    '}"
@@ -51,7 +59,8 @@ bad() { # id description detail
 check() { # id description command...: passes when the command succeeds
     local id="$1" desc="$2"
     shift 2
-    if "$@"; then ok; else bad "$id" "$desc"; fi
+    filter_gate "$id $desc" || return 0
+    if "$@"; then _ok; else bad "$id" "$desc"; fi
 }
 
 # --- helpers -----------------------------------------------------------------------------------------------------
@@ -298,6 +307,7 @@ if [ "${PROXY_TEST_ONLY:-}" = drift ]; then # only the drift section (about 2 mi
     refresh_port
     drift_section
     echo "$pass passed, $failed failed"
+    filter_report "$pass" "$failed" || exit 1
     [ "$failed" -eq 0 ]
     exit
 fi
@@ -489,6 +499,7 @@ routes_section() {
 if [ "${PROXY_TEST_ONLY:-}" = routes ]; then # only the AC3 routing section
     routes_section
     echo "$pass passed, $failed failed"
+    filter_report "$pass" "$failed" || exit 1
     [ "$failed" -eq 0 ]
     exit
 fi
@@ -498,6 +509,7 @@ if [ "${PROXY_TEST_ONLY:-}" = net ]; then # only the AC5 and AC6 sections
     dns_section
     timeout_section
     echo "$pass passed, $failed failed"
+    filter_report "$pass" "$failed" || exit 1
     [ "$failed" -eq 0 ]
     exit
 fi
@@ -699,4 +711,5 @@ drift_section
 
 echo
 echo "$pass passed, $failed failed"
+filter_report "$pass" "$failed" || exit 1
 [ "$failed" -eq 0 ]

@@ -9,6 +9,8 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 check="$root/tools/check-compose-images.sh"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+# shellcheck source=lib/filter.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/filter.sh"
 pass=0
 failed=0
 
@@ -16,8 +18,13 @@ ours=ghcr.io/rodgallert
 digest64="sha256:$(printf '0123456789abcdef%.0s' 1 2 3 4)"
 digest63="${digest64%?}"
 
-ok() { pass=$((pass + 1)); }
+_ok() { pass=$((pass + 1)); } # a case that already passed the filter in its own helper
+ok() {
+    filter_site_gate || return 0
+    pass=$((pass + 1))
+}
 bad() { # id description detail
+    filter_selected "$1 $2" || return 0 # an assertion that is not a counted pass: filtered out silently
     failed=$((failed + 1))
     echo "FAIL: $1 $2"
     [ -n "${3:-}" ] && printf '%s\n' "    ${3//$'\n'/$'\n    '}"
@@ -45,6 +52,7 @@ out=""
 run_case() {
     local id="$1" desc="$2" want="$3" text="$4" rc
     shift 4
+    filter_gate "$id $desc" || return 0
     out="$("$check" "$@" 2>&1)"
     rc=$?
     case "$want" in
@@ -63,7 +71,7 @@ run_case() {
         bad "$id" "$desc: output lacks \"$text\"" "$out"
         return
     fi
-    ok
+    _ok
 }
 
 # --- #74-AC4: ours must be published, third-party needs a tag or digest ------------------------------------------------
@@ -171,4 +179,5 @@ rc=$?
 [ "$rc" -eq 0 ] && ok || bad "#74-AC4" "the repository's own Compose files pass" "$out"
 
 echo "check-compose-images tests: $pass passed, $failed failed"
+filter_report "$pass" "$failed" || exit 1
 [ "$failed" -eq 0 ]

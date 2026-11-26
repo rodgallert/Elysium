@@ -12,6 +12,8 @@ script="$tools/ticket.sh"
 stubs="$tools/tests/ticket-stubs"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+# shellcheck source=lib/filter.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/filter.sh"
 pass=0
 failed=0
 
@@ -114,6 +116,7 @@ tpath() {
 check() { # <name> <command...>: passes when the command succeeds
     local name="$1"
     shift
+    filter_gate "$name" || return 0
     if "$@" >/dev/null 2>&1; then
         pass=$((pass + 1))
         [ -z "${VERBOSE:-}" ] || echo "ok    $name"
@@ -1032,7 +1035,7 @@ test_ac6_docs() {
     check "#70-AC6.6 the docs say what to do when a step fails (report its last line, never switch accounts)" grep -qi "report its last line" "$skill"
     check "#70-AC6.7 the docs say a re-run is safe" grep -qi "re-run is safe" "$skill"
     check "#70-AC6.8 the docs repeat never gh auth switch" bash -c 'grep -qF "gh auth switch" "'"$skill"'" && grep -qi "never.*gh auth switch" "'"$skill"'"'
-    check "#70-AC6 tools/tests/ticket-tools.sh is listed in the gate job" grep -qF "tools/tests/ticket-tools.sh" "$tools/../.github/workflows/build.yml"
+    check "#70-AC6 tools/tests/ticket-tools.sh is in the set tools/tests/run-all.sh runs in the gate job" grep -qE "^parallel=\(([^)]* )?ticket-tools[ )]" "$tools/tests/run-all.sh"
     check "#70-AC6 tools/tests/ticket-tools.sh is listed in workflow.md" grep -qF "tools/tests/ticket-tools.sh" "$wf"
 }
 
@@ -1051,9 +1054,10 @@ for fn in test_ac1 test_ac1_1_inputs test_ac1_2_boundaries test_ac1_6_account te
     test_real_history test_trusted_comments test_linked_branch test_file_guards test_rate_limit_waits \
     test_ac5_5_isolation test_ac5_6_nth_call test_ac5_9_jq test_ac6_docs test_lint; do
     echo "== $fn"
-    "$fn"
+    filter_run "$fn"
 done
 
 echo
 echo "$pass passed, $failed failed"
+filter_report "$pass" "$failed" || exit 1
 [ "$failed" -eq 0 ]

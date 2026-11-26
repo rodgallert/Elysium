@@ -8,6 +8,10 @@ tools="$(cd "$(dirname "$0")/.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 failures=0
+# shellcheck source=lib/filter.sh
+source "$(dirname "$0")/lib/filter.sh"
+filter_precheck "$0" # the cases build on each other, so every command runs: a filter no case names stops here
+ran=0
 
 # Guard: every git command here must act on the fixture repository under $work, never on the real one. The
 # cases change remotes and push tags; run against the real repository, they would rewrite its origin or push
@@ -24,6 +28,10 @@ expect() {
     local want="$1" what="$2" out got
     shift 2
     if out="$("$@" 2>&1)"; then got=ok; else got=fail; fi
+    # the cases build on each other (a command changes what the next one looks at), so every command runs; only the cases the
+    # filter names are reported and counted
+    filter_gate "$what" || return 0
+    ran=$((ran + 1))
     if [ "$got" = "$want" ]; then
         echo "ok    $what"
         # VERBOSE=1 shows why each case passed or failed
@@ -411,6 +419,7 @@ git remote set-url origin "$work/nowhere.git"
 state fail "a git remote that can't be read fails"
 
 echo
+filter_report "$ran" 0 || exit 1
 if [ "$failures" -gt 0 ]; then
     echo "$failures failed"
     exit 1

@@ -15,6 +15,9 @@
 # COMPOSE_SMOKE_PROJECT       overrides the project name
 # Needs Docker with Compose 2.22+ (start_interval), curl, jq and a free loopback port.
 set -uo pipefail
+# shellcheck source=lib/filter.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/filter.sh"
+filter_precheck "${BASH_SOURCE[0]}" # a filter no case names is refused here, before any container starts
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 compose="$root/Prince/docker-compose.yml"
@@ -37,8 +40,13 @@ printf '%s\n' "POSTGRES_USER=prince" "POSTGRES_PASSWORD=$password" "POSTGRES_DB=
     "FILE_STORAGE_ROOT_PASSWORD=ChangeMe123!" "FILE_STORAGE_BUCKET=product-files" >"$env_file"
 
 say() { printf '%s\n' "$*" | tee -a "$log"; }
-ok() { pass=$((pass + 1)); }
+_ok() { pass=$((pass + 1)); } # a case that already passed the filter in its own helper
+ok() {
+    filter_site_gate || return 0
+    pass=$((pass + 1))
+}
 bad() { # id description detail
+    filter_selected "$1 $2" || return 0 # an assertion that is not a counted pass: filtered out silently
     failed=$((failed + 1))
     say "FAIL: $1 $2"
     [ -n "${3:-}" ] && say "    ${3//$'\n'/$'\n    '}"
@@ -46,7 +54,8 @@ bad() { # id description detail
 check() { # id description command...: passes when the command succeeds
     local id="$1" desc="$2"
     shift 2
-    if "$@"; then ok; else bad "$id" "$desc"; fi
+    filter_gate "$id $desc" || return 0
+    if "$@"; then _ok; else bad "$id" "$desc"; fi
 }
 note() { say "note: $*"; }
 
@@ -580,4 +589,5 @@ esac
 if grep -qF -- "$password" "$log" 2>/dev/null; then bad "#74-AC1.10" "the output contains the Postgres password"; else ok; fi
 
 say "compose smoke tests: $pass passed, $failed failed"
+filter_report "$pass" "$failed" || exit 1
 [ "$failed" -eq 0 ]
