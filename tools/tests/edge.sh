@@ -10,9 +10,14 @@
 #                 Compose project of its own (a few minutes). Not run in CI.
 # Needs Docker with Compose 2.22+, curl, jq, ss and a free loopback port 80 (the test uses the real ports and network names,
 # so it can't run next to a running edge: it says so and stops, or fails when CI is set).
-# Takes about 2 minutes (one 30 s wait for the upstream read timeout). The windows of 10 s (the name lookup, #75-AC1.3 and AC3.3, and
+# Takes about 1.5 minutes. The edge runs with the timeouts of tools/tests/edge/timeouts-short.conf (3 s upstream read, 1 s connect,
+# #126), mounted over Edge/timeouts.conf, so the read timeout case waits 3 s, not 30; the shipped file keeps the #75 values, checked
+# statically below. The windows of 10 s (the name lookup, #75-AC1.3 and AC3.3, and
 # the client header and body timeouts, AC3.4) are tested with 12 s: two seconds of tolerance on a loaded machine.
 set -uo pipefail
+# shellcheck source=lib/filter.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/filter.sh"
+filter_precheck "${BASH_SOURCE[0]}" # a filter no case names is refused here, before any container starts
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fixture="$root/tools/tests/edge"
@@ -33,23 +38,31 @@ edc() { docker compose -f "$edge_dir/docker-compose.yml" "$@"; }
 sdc() { docker compose -p "$stubs_project" -f "$fixture/stubs.yml" "$@"; }
 stackdc() { docker compose -f "$fixture/stack.yml" "$@"; }
 
-ok() { pass=$((pass + 1)); }
+_ok() { pass=$((pass + 1)); } # a case that already passed the filter in its own helper
+ok() {
+    filter_site_gate || return 0
+    pass=$((pass + 1))
+}
 bad() { # id description detail
+    filter_selected "$1 $2" || return 0 # an assertion that is not a counted pass: filtered out silently
     failed=$((failed + 1))
     echo "FAIL: $1 $2"
     [ -n "${3:-}" ] && printf '%s\n' "    ${3//$'\n'/$'\n    '}"
 }
 skip() { # id reason
+    filter_selected "$1 $2" || return 0
     skipped=$((skipped + 1))
     echo "SKIP: $1 $2"
 }
 check() { # id description command...: passes when the command succeeds
     local id="$1" desc="$2"
     shift 2
-    if "$@"; then ok; else bad "$id" "$desc"; fi
+    filter_gate "$id $desc" || return 0
+    if "$@"; then _ok; else bad "$id" "$desc"; fi
 }
 eq() { # id description expected actual
-    if [ "$3" = "$4" ]; then ok; else bad "$1" "$2" "expected: $3"$'\n'"got:      $4"; fi
+    filter_gate "$1 $2" || return 0
+    if [ "$3" = "$4" ]; then _ok; else bad "$1" "$2" "expected: $3"$'\n'"got:      $4"; fi
 }
 
 cleanup() {
@@ -174,7 +187,7 @@ svc() { jq -r ".services.edge | $1" <<<"$edge_json"; }
 # #75-AC1.1 inputs: nginx -t rejects a broken config before any container starts, and accepts the real one (same flags as the container)
 nginx_t() { # config file
     docker run --rm --read-only --tmpfs /tmp:uid=101,gid=101 --tmpfs /var/cache/nginx:uid=101,gid=101 -u 101:101 --cap-drop ALL \
-        -v "$1:/etc/nginx/nginx.conf:ro,z" "$ECHO_IMAGE" nginx -t 2>&1
+        -v "$1:/etc/nginx/nginx.conf:ro,z" -v "$edge_src/timeouts.conf:/etc/nginx/edge-timeouts.conf:ro,z" "$ECHO_IMAGE" nginx -t 2>&1
 }
 if out="$(nginx_t "$fixture/fixtures/broken-nginx.conf")"; then bad "#75-AC1.1" "nginx -t accepted a broken config" "$out"; else ok; fi
 out="$(nginx_t "$edge_src/nginx.conf")" && ok || bad "#75-AC1.1" "nginx -t rejects Edge/nginx.conf" "$out"
@@ -218,7 +231,13 @@ grep -q "exactly 127.0.0.1:80 and \[::1\]:80" <<<"$out" && ok || bad "#75-AC2.1"
 # #75-AC3.9 environment differences: the resolver and the allow-list live in the config, the same everywhere
 conf="$edge_src/nginx.conf"
 check "#75-AC3.9" "resolver 127.0.0.11 valid=10s ipv6=off" grep -q '^ *resolver 127\.0\.0\.11 valid=10s ipv6=off;' "$conf"
-check "#75-AC3.4" "timeouts as specified" bash -c 'for d in "proxy_connect_timeout 3s" "proxy_read_timeout 30s" "proxy_send_timeout 30s" "client_header_timeout 10s" "client_body_timeout 10s"; do grep -q "^ *$d;" "$1" || exit 1; done' _ "$conf"
+# the timeouts live in one include (#126-AC3): the shipped file has the #75 values, nginx.conf includes it and sets none itself
+check "#75-AC3.4" "timeouts as specified" bash -c 'for d in "proxy_connect_timeout 3s" "proxy_read_timeout 30s" "proxy_send_timeout 30s" "client_header_timeout 10s" "client_body_timeout 10s"; do grep -q "^ *$d;" "$1" || exit 1; done' _ "$edge_src/timeouts.conf"
+check "#126-AC3" "the shipped include still has the #75 values, and nothing else (five directives)" bash -c '[ "$(grep -cvE "^ *(#|$)" "$1")" -eq 5 ]' _ "$edge_src/timeouts.conf"
+check "#126-AC3" "nginx.conf sets none of the five timeouts itself, and includes the file" bash -c '! grep -qE "^ *(proxy_connect_timeout|proxy_send_timeout|proxy_read_timeout|client_header_timeout|client_body_timeout) " "$1" && grep -qE "^ *include /etc/nginx/edge-timeouts\.conf;" "$1"' _ "$conf"
+check "#126-AC3" "the compose file mounts the shipped include" bash -c 'grep -qE "^ *- \./timeouts\.conf:/etc/nginx/edge-timeouts\.conf:ro" "$1"' _ "$edge_src/docker-compose.yml"
+check "#126-AC3.3" "the shipped config never loads the test override (nothing outside tools/tests names it)" bash -c '! grep -rIl "timeouts-short" "$1/Edge" "$1/Prince" "$1/docker-compose.prod.yml" 2>/dev/null | grep -q .' _ "$root"
+check "#126-AC3.3" "the override is shorter than the shipped values (3 s read, 1 s connect)" bash -c 'grep -qE "^ *proxy_read_timeout 3s;" "$1" && grep -qE "^ *proxy_connect_timeout 1s;" "$1"' _ "$fixture/timeouts-short.conf"
 check "#75-AC3.2" "buffers and body limit as specified" bash -c 'grep -q "^ *large_client_header_buffers 4 8k;" "$1" && grep -q "^ *client_max_body_size 10m;" "$1"' _ "$conf"
 check "#75-AC3.10" "server_tokens off" grep -q '^ *server_tokens off;' "$conf"
 check "#75-AC5" "access log is one json line with escape=json" grep -q 'log_format edge escape=json' "$conf"
@@ -249,6 +268,8 @@ out="$(env -i PATH="$PATH" POSTGRES_USER=u POSTGRES_PASSWORD=p POSTGRES_DB=d JOB
 echo "== #75-AC1.5, AC1.6: a stack and the missing network"
 mkdir -p "$edge_dir"
 cp "$edge_src/docker-compose.yml" "$edge_src/nginx.conf" "$edge_dir/"
+# the edge under test runs with the short timeouts (#126-AC3): the override takes the place of the include in this copy
+cp "$fixture/timeouts-short.conf" "$edge_dir/timeouts.conf"
 # an .env of markers next to the compose file: none of its values may show up in the edge's output (#75-AC1.10, AC2.10)
 env_marker="EDGE-ENV-MARKER-$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 printf '%s\n' "POSTGRES_PASSWORD=$env_marker" "EDGE_SECRET=$env_marker" >"$edge_dir/.env"
@@ -675,7 +696,7 @@ get prince.localhost /x
 took=$(($(now_ms) - start))
 eq "#75-AC3.3" "the stopped stack's host answers 502" "502" "$status"
 expect_headers "#75-AC4.3" "security headers on a 502"
-[ "$took" -le 4000 ] && ok || bad "#75-AC3.4" "a stack that does not accept answers within 4 s (took ${took} ms)"
+[ "$took" -le 2000 ] && ok || bad "#75-AC3.4" "a stack that does not accept answers within 2 s (1 s connect timeout, #126; took ${took} ms)"
 check "#75-AC3.6" "the 502 holds no other backend's response" bash -c '! grep -q "backend=" <<<"$1"' _ "$body"
 get prince.dev.localhost /x
 eq "#75-AC3.3" "the other host still answers 200 in the same run" "200" "$status"
@@ -757,7 +778,7 @@ eq "#75-AC7.8" "a raw-character path on an unknown host gets 421" "421" "$status
 
 # === #75-AC3.4: time =================================================================================================
 
-echo "== #75-AC3.4: timeouts (about 40 s)"
+echo "== #75-AC3.4: timeouts (3 s read and 1 s connect for the test, #126; about 12 s)"
 # an upstream that accepts and never answers: the dev alias goes to a container that listens and says nothing
 sdc stop dev >/dev/null 2>&1
 docker run -d --rm --name "${tag}-hang" --label "edgetest=$tag" --network elysium-edge --network-alias prince-dev-proxy \
@@ -782,7 +803,7 @@ sleep 11 # the resolver's cached address of the stopped stub expires
 ) &
 wait
 read -r code ms <"$work/t-read"
-if [ "$code" = 504 ] && [ "$ms" -ge 28000 ] && [ "$ms" -le 32000 ]; then ok; else bad "#75-AC3.4" "an upstream that never answers: expected 504 after 30 s +-2 s, got ${code:-nothing} after ${ms:-?} ms"; fi
+if [ "$code" = 504 ] && [ "$ms" -ge 2000 ] && [ "$ms" -le 4000 ]; then ok; else bad "#75-AC3.4" "an upstream that never answers: expected 504 after 3 s +-1 s (the 3 s read timeout of the test override, #126), got ${code:-nothing} after ${ms:-?} ms"; fi
 read -r code ms <"$work/t-header"
 if { [ "$code" = 408 ] || [ "$code" = closed ]; } && [ "$ms" -ge 9000 ] && [ "$ms" -le 12000 ]; then ok; else bad "#75-AC3.4" "client_header_timeout: expected 408 or a closed connection after about 10 s, got ${code:-nothing} after ${ms:-?} ms"; fi
 read -r code ms <"$work/t-body"
@@ -903,4 +924,5 @@ fi
 
 echo
 echo "$pass passed, $failed failed, $skipped skipped"
+filter_report "$pass" "$failed" || exit 1
 [ "$failed" -eq 0 ]
